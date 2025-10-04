@@ -10,7 +10,7 @@
     <ProductVersion>10.0.20506</ProductVersion>
     <SchemaVersion>2.0</SchemaVersion>
     <RootNamespace></RootNamespace>
-    <ProjectGuid>{4CB6388F-3C5C-91AB-7C38-1CB213A88A13}</ProjectGuid>
+    <ProjectGuid>{289B82DD-1290-2793-F69F-0FBA851E5442}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <AssemblyName>Unity.Entities.Editor</AssemblyName>
@@ -59,18 +59,18 @@
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\6000.1.6f1\Editor\Data\Tools\Unity.SourceGenerators\Unity.SourceGenerators.dll" />
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\6000.1.6f1\Editor\Data\Tools\Unity.SourceGenerators\Unity.Properties.SourceGenerator.dll" />
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\6000.1.6f1\Editor\Data\Tools\Unity.SourceGenerators\Unity.UIToolkit.SourceGenerator.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\AspectGenerator.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\JobEntityGenerator.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\Unity.Entities.Analyzer.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.LambdaJobs.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.SystemAPI.QueryBuilder.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.SystemAPI.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.SystemAPI.Query.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.Common.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\Common.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.EntityQueryBulkOperations.dll" />
-    <Analyzer Include="C:\Users\matri\Quantum Wave Collapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\Unity.Entities.Analyzer.CodeFixes.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\AspectGenerator.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\JobEntityGenerator.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\Unity.Entities.Analyzer.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.LambdaJobs.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.SystemAPI.QueryBuilder.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.SystemAPI.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.SystemAPI.Query.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.Common.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\Common.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\SystemGenerator.EntityQueryBulkOperations.dll" />
+    <Analyzer Include="C:\Users\matri\Documents\QuantumWaveCollapse\Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities\SourceGenerators\Unity.Entities.Analyzer.CodeFixes.dll" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Baking\EntityBakingPreview.cs" />
@@ -243,8 +243,8 @@
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\PropertyDrawers\UnityObjectRefPropertyDrawer.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Common\Controls\TabView\TabViewAttribute.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Inspector\InspectorSettings.cs" />
-    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Baking\BakingPreferences.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\EntityInspector\EntitySelectionProxyUtils.cs" />
+    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Baking\BakingPreferences.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Utilities\Pooling\Pool.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Search\QuickSearchBackend.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Utilities\Cooldown.cs" />
@@ -289,13 +289,13 @@
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Content\EntityQuery\QueryWindowHelper.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Content\SystemInspector\System\SystemContent.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\SystemSchedule\PlayerLoop\WorldProxy.cs" />
-    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Inspector\EntityContainer.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\ProfilerModules\RuntimeContentManagerProfilerModule.cs" />
+    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Inspector\EntityContainer.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Utilities\Pooling\QueuePool.cs" />
-    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\SystemSchedule\PlayerLoop\SystemGraph.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Utilities\Resources.cs" />
-    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Utilities\UssClasses.cs" />
+    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\SystemSchedule\PlayerLoop\SystemGraph.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Inspector\Visitors\Aspects\EntityInspectorAspectStructure.cs" />
+    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Utilities\UssClasses.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\SystemSchedule\SystemScheduleWindow.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Content\Controls\Header.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Search\SearchUtils.cs" />
@@ -327,9 +327,9 @@
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\GUI\Legacy\Controls\PaginationField.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\GUI\Legacy\Controls\RuntimeComponents\Adapters\IMGUIAdapter.Mathematics.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Search\SystemSearchProvider.cs" />
-    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\GUI\Legacy\Controls\RuntimeComponents\Adapters\IMGUIAdapter.Default.cs" />
-    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Common\Controls\FoldoutWithActionButton.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Common\Controls\FoldoutWithHeader.cs" />
+    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Common\Controls\FoldoutWithActionButton.cs" />
+    <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\GUI\Legacy\Controls\RuntimeComponents\Adapters\IMGUIAdapter.Default.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Common\Controls\TabView\TabContent.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Archetypes\ArchetypesWindow+Recorder.cs" />
     <Compile Include="Library\PackageCache\com.unity.entities@e581b903be8e\Unity.Entities.Editor\Hierarchy\Model\Hierarchy.cs" />
@@ -1363,83 +1363,83 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="Unity.Burst.csproj">
-      <Project>{E55111E8-5D63-4913-FD4A-6EACD1F225CF}</Project>
+      <Project>{77769AEE-0B36-B406-E9B6-5DF11E54CDA8}</Project>
       <Name>Unity.Burst</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Collections.csproj">
-      <Project>{B1E87BB6-9571-DFB8-FB30-EE1F3FB546B3}</Project>
+      <Project>{E1B0D2DC-290E-6649-83A9-91B55331F4D5}</Project>
       <Name>Unity.Collections</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Entities.csproj">
-      <Project>{3FC99218-7967-E228-C7CB-024ECF3614BF}</Project>
+      <Project>{C4B553E8-01BF-927E-7C83-7A31A5C492E9}</Project>
       <Name>Unity.Entities</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Entities.Editor.Properties.csproj">
-      <Project>{BF539686-C78C-396B-42B8-8472CC491773}</Project>
+      <Project>{E6344CAD-6DD9-8ED5-90B8-0AFAF2386CC8}</Project>
       <Name>Unity.Entities.Editor.Properties</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Entities.Hybrid.csproj">
-      <Project>{EFEA032C-E973-B417-C7A9-EA530FFA4367}</Project>
+      <Project>{497A8171-9FE2-04D3-9E58-CF00764B4E8C}</Project>
       <Name>Unity.Entities.Hybrid</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.InternalAPIEditorBridge.002.csproj">
-      <Project>{C3C98216-94C9-3695-9E58-2E3700172835}</Project>
+      <Project>{241CA78A-AA7A-B893-DD86-C70BAB3DA4CB}</Project>
       <Name>Unity.InternalAPIEditorBridge.002</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.InternalAPIEngineBridge.002.csproj">
-      <Project>{8E008C42-7DA0-A33B-3D28-4A4D7A528685}</Project>
+      <Project>{706D00F4-7A5F-06B9-2C35-C539A6A994A0}</Project>
       <Name>Unity.InternalAPIEngineBridge.002</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Mathematics.csproj">
-      <Project>{C93DFCC8-B322-4157-D2ED-C9792B7F47B8}</Project>
+      <Project>{26D8A8A6-23DB-2E09-7E98-3D6B139529C8}</Project>
       <Name>Unity.Mathematics</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Profiling.Core.csproj">
-      <Project>{A38480F5-0F85-09F9-591E-47B007134832}</Project>
+      <Project>{3708005E-A55C-92EA-C4E0-1131906B462F}</Project>
       <Name>Unity.Profiling.Core</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Entities.UI.csproj">
-      <Project>{4D81DC55-0CCA-56E1-35D1-1E50C781AF9A}</Project>
+      <Project>{6370A23A-8B51-CBE7-9E18-C149187CEABF}</Project>
       <Name>Unity.Entities.UI</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Entities.UI.Editor.csproj">
-      <Project>{7C55C01A-47AF-DD17-65A2-C89B22AA5644}</Project>
+      <Project>{CE3B69FD-423D-845B-53A2-914806F605E4}</Project>
       <Name>Unity.Entities.UI.Editor</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Scenes.csproj">
-      <Project>{E5EE9E39-8932-5762-8956-C39CD02B6BC6}</Project>
+      <Project>{BCA82A35-E06B-0E17-1D67-CB0E12F5437B}</Project>
       <Name>Unity.Scenes</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Scenes.Editor.csproj">
-      <Project>{47709C7A-73A4-CE3C-097E-071F46351F87}</Project>
+      <Project>{5BF86B5F-EAEF-5EF4-6B4F-C25D32D1F10B}</Project>
       <Name>Unity.Scenes.Editor</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Serialization.csproj">
-      <Project>{072890CB-5149-FA25-7227-D7908E9FC330}</Project>
+      <Project>{2A829AEA-A1DB-1EFF-DBD8-BD26DB13EE75}</Project>
       <Name>Unity.Serialization</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Serialization.Editor.csproj">
-      <Project>{89EFDB47-D1A7-3E2F-C05B-6DF261A102ED}</Project>
+      <Project>{18F08BBF-2664-8CBB-D21C-4A56D1B73090}</Project>
       <Name>Unity.Serialization.Editor</Name>
     </ProjectReference>
     <ProjectReference Include="Unity.Transforms.csproj">
-      <Project>{52C6C3DF-F920-E146-D4BB-D79D452A8C10}</Project>
+      <Project>{15120033-882A-73FB-E330-E2958D0B8E55}</Project>
       <Name>Unity.Transforms</Name>
     </ProjectReference>
     <ProjectReference Include="UnityEditor.UI.csproj">
-      <Project>{47C5B209-EE4C-CA28-9438-97726FFC9164}</Project>
+      <Project>{6055B015-A6F8-0FC0-3EEF-75B92E031DEF}</Project>
       <Name>UnityEditor.UI</Name>
     </ProjectReference>
     <ProjectReference Include="UnityEngine.UI.csproj">
-      <Project>{59037773-6732-E9D0-9929-3B64A08E4BB7}</Project>
+      <Project>{8313E7A5-F9B3-B260-DC74-7C7225ACF099}</Project>
       <Name>UnityEngine.UI</Name>
     </ProjectReference>
     <ProjectReference Include="UnityEngine.TestRunner.csproj">
-      <Project>{D7541937-07DE-D352-D085-48D18875F1CC}</Project>
+      <Project>{2F90CEE4-79CA-D778-CEC2-1D2A4B984B57}</Project>
       <Name>UnityEngine.TestRunner</Name>
     </ProjectReference>
     <ProjectReference Include="UnityEditor.TestRunner.csproj">
-      <Project>{FD7E9660-5A75-08D1-C067-9D4893D563A6}</Project>
+      <Project>{EB0A63A5-DA45-BB26-3FBD-0F148471FF84}</Project>
       <Name>UnityEditor.TestRunner</Name>
     </ProjectReference>
   </ItemGroup>

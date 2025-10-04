@@ -1,13 +1,16 @@
-﻿using Unity.Burst;
+﻿// DMC2DSystem.cs — drift-diffusion + velocity + decaying ClickForce acceleration (safe empty array)
+using Unity.Burst;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 
 [WorldSystemFilter(WorldSystemFilterFlags.Default)]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [UpdateAfter(typeof(ParticleSpawnSystem))]
-[UpdateBefore(typeof(DMCResampleSystem))] // ensure DMC runs before the resampler
 public partial struct DMC2DSystem : ISystem
 {
+    EntityQuery _forcesQ;
+
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
@@ -15,6 +18,8 @@ public partial struct DMC2DSystem : ISystem
         state.RequireForUpdate<Potential2D>();
         state.RequireForUpdate<SimBounds2D>();
         state.RequireForUpdate<ParticleTag>();
+
+        _forcesQ = state.GetEntityQuery(ComponentType.ReadOnly<ClickForce>());
     }
 
     [BurstCompile]
@@ -24,11 +29,19 @@ public partial struct DMC2DSystem : ISystem
         var pot = SystemAPI.GetSingleton<Potential2D>();
         var b = SystemAPI.GetSingleton<SimBounds2D>();
 
-        float dt = qp.DeltaTau;
-        float sqrtStep = math.sqrt(2f * qp.Diffusion * dt);
+        float dt = math.max(0f, qp.DeltaTau);
+        float sqrtStep = math.sqrt(2f * math.max(0f, qp.Diffusion) * dt);
+
+        // Per-second velocity damping (keeps motion from running away). Tune 0.5..5
+        float velDamp = 2.0f;
 
         float2 minB = b.Center - b.Extents;
         float2 maxB = b.Center + b.Extents;
+
+        // ALWAYS construct a forces array (even if empty) so the job gets a valid container
+        NativeArray<ClickForce> forces = _forcesQ.IsEmpty
+            ? new NativeArray<ClickForce>(0, Allocator.TempJob)
+            : _forcesQ.ToComponentDataArray<ClickForce>(Allocator.TempJob);
 
         var job = new DMCStepJob
         {
@@ -38,12 +51,41 @@ public partial struct DMC2DSystem : ISystem
             BoundaryMode = qp.BoundaryMode,
             MinB = minB,
             MaxB = maxB,
-            Pot = pot
+            Pot = pot,
+            VelDamp = velDamp,
+            TimeNow = SystemAPI.Time.ElapsedTime,
+            Forces = forces
         };
+
         state.Dependency = job.ScheduleParallel(state.Dependency);
+        state.Dependency.Complete(); // make updates visible downstream
+
+        // Dispose the temp array now that the job completed
+        if (forces.IsCreated) forces.Dispose();
+
+        // Cleanup expired ClickForce entities (small set → cheap)
+        if (!_forcesQ.IsEmpty)
+        {
+            var em = state.EntityManager;
+            var fEnts = _forcesQ.ToEntityArray(Allocator.Temp);
+            var fData = _forcesQ.ToComponentDataArray<ClickForce>(Allocator.Temp);
+            double now = SystemAPI.Time.ElapsedTime;
+
+            for (int i = 0; i < fEnts.Length; i++)
+            {
+                var f = fData[i];
+                float age = (float)(now - f.StartTime);
+                if (age > f.DecaySeconds * 4f) // ~98% decayed
+                    em.DestroyEntity(fEnts[i]);
+            }
+
+            fEnts.Dispose();
+            fData.Dispose();
+        }
     }
 
     [BurstCompile]
+    [WithAll(typeof(ParticleTag))]
     public partial struct DMCStepJob : IJobEntity
     {
         public float Dt;
@@ -52,11 +94,14 @@ public partial struct DMC2DSystem : ISystem
         public int BoundaryMode; // 0 reflect, 1 clamp, 2 periodic
         public float2 MinB, MaxB;
         public Potential2D Pot;
+        public float VelDamp;      // per-second linear damping for velocity
+        public double TimeNow;
 
-        // Box-Muller: two standard normals
+        [ReadOnly] public NativeArray<ClickForce> Forces;
+
         static float2 Gaussian2(ref Unity.Mathematics.Random rng)
         {
-            float u1 = math.max(1e-7f, rng.NextFloat()); // avoid log(0)
+            float u1 = math.max(1e-7f, rng.NextFloat());
             float u2 = rng.NextFloat();
             float r = math.sqrt(-2f * math.log(u1));
             float a = 2f * math.PI * u2;
@@ -75,9 +120,9 @@ public partial struct DMC2DSystem : ISystem
                     }
                 case PotentialType2D.DoubleWell:
                     {
-                        float a = p.Params.x, b = p.Params.y;
-                        float vx = a * math.pow(x.x * x.x - b * b, 2);
-                        float vy = a * math.pow(x.y * x.y - b * b, 2);
+                        float a = p.Params.x, bb = p.Params.y;
+                        float vx = a * math.pow(x.x * x.x - bb * bb, 2);
+                        float vy = a * math.pow(x.y * x.y - bb * bb, 2);
                         return vx + vy;
                     }
                 case PotentialType2D.BoxZero:
@@ -86,18 +131,19 @@ public partial struct DMC2DSystem : ISystem
             }
         }
 
-        static float2 ApplyBoundary(float2 p, float2 minB, float2 maxB, int mode)
+        static void ApplyBoundary(ref float2 p, ref float2 v, float2 minB, float2 maxB, int mode)
         {
             if (mode == 0) // reflect
             {
-                if (p.x < minB.x) p.x = minB.x + (minB.x - p.x);
-                if (p.x > maxB.x) p.x = maxB.x - (p.x - maxB.x);
-                if (p.y < minB.y) p.y = minB.y + (minB.y - p.y);
-                if (p.y > maxB.y) p.y = maxB.y - (p.y - maxB.y);
+                if (p.x < minB.x) { p.x = minB.x + (minB.x - p.x); v.x = -v.x; }
+                if (p.x > maxB.x) { p.x = maxB.x - (p.x - maxB.x); v.x = -v.x; }
+                if (p.y < minB.y) { p.y = minB.y + (minB.y - p.y); v.y = -v.y; }
+                if (p.y > maxB.y) { p.y = maxB.y - (p.y - maxB.y); v.y = -v.y; }
             }
             else if (mode == 1) // clamp
             {
                 p = math.clamp(p, minB, maxB);
+                v *= 0.5f;
             }
             else // periodic
             {
@@ -106,33 +152,61 @@ public partial struct DMC2DSystem : ISystem
                 t = t - math.floor(t);
                 p = minB + t * size;
             }
-            return p;
         }
 
-        public void Execute(ref Position pos, ref Weight w, ref RandomState rnd /* optional: ref Velocity vel */)
+        float2 AccelFromForces(float2 x, double now)
         {
-            // Rebuild RNG from stored state (uint)
+            if (!Forces.IsCreated || Forces.Length == 0) return 0f;
+
+            float2 a = 0f;
+            for (int i = 0; i < Forces.Length; i++)
+            {
+                var f = Forces[i];
+
+                float age = (float)(now - f.StartTime);
+                if (age < 0f) continue;
+
+                float tau = math.max(1e-6f, f.DecaySeconds);
+                float decay = math.exp(-age / tau);
+                if (decay < 1e-3f) continue;
+
+                float2 d = x - f.Center;
+                float r = math.length(d);
+                if (r <= 1e-8f) continue;
+
+                float t = math.saturate((r - f.InnerRadius) / math.max(1e-6f, (f.OuterRadius - f.InnerRadius)));
+                float fall = 1f - (t * t * (3f - 2f * t)); // smoothstep 1→0
+                if (fall <= 0f) continue;
+
+                float2 dir = d / r;
+                a += dir * (f.Strength * decay * fall);
+            }
+            return a;
+        }
+
+        public void Execute(ref Position pos, ref Weight w, ref RandomState rnd, ref Velocity vel)
+        {
             var rng = Unity.Mathematics.Random.CreateFromIndex(math.max(1u, rnd.Value));
 
-            // Diffusion
+            // External acceleration + semi-implicit Euler with damping
+            float2 a = AccelFromForces(pos.Value, TimeNow);
+            float lambda = math.max(0f, VelDamp);
+            float damp = math.max(0f, 1f - lambda * Dt);
+            vel.Value = vel.Value * damp + a * Dt;
+
+            // Drift + diffusion
             float2 g = Gaussian2(ref rng);
-            pos.Value += SqrtStep * g;
+            pos.Value += vel.Value * Dt + SqrtStep * g;
 
-            // Bounds
-            pos.Value = ApplyBoundary(pos.Value, MinB, MaxB, BoundaryMode);
+            // Boundaries
+            ApplyBoundary(ref pos.Value, ref vel.Value, MinB, MaxB, BoundaryMode);
 
-            // Weight update with clamped exponent to keep numbers stable
+            // Weight update
             float V = PotentialValue(Pot, pos.Value);
-            float exponent = math.clamp(-Dt * (V - ERef), -12f, 12f); // was -20..20
-            float factor = math.exp(exponent);
+            float exponent = math.clamp(-Dt * (V - ERef), -12f, 12f);
+            w.Value *= math.exp(exponent);
 
-            float newW = w.Value * factor;
-            if (!math.isfinite(newW)) newW = 0f;
-            newW = math.clamp(newW, 1e-30f, 1e+30f);
-            w.Value = newW;
-
-            // Store RNG state back (never 0)
-            if (rng.state == 0) rng = Unity.Mathematics.Random.CreateFromIndex(1u);
+            // persist RNG
             rnd.Value = rng.state;
         }
     }

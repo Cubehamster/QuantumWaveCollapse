@@ -153,9 +153,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   Count: 2000000
   Center: {x: 0, y: 0}
-  Extents: {x: 512, y: 512}
-  MinSpeed: 0.5
-  MaxSpeed: 15.29
+  Extents: {x: 256, y: 256}
+  MinSpeed: 5
+  MaxSpeed: 30
   MinWeight: 0.8
   MaxWeight: 1.2
   Seed: 0
@@ -187,7 +187,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   DeltaTau: 0.005
-  Diffusion: 0.5
+  Diffusion: 500
   ERef: 1
   BoundaryMode: 0
   Type: 0

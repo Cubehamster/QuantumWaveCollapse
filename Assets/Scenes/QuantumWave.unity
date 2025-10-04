@@ -144,7 +144,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 102119718}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f584493de39f0f342970ed55b11e3ea2, type: 3}
   m_Name: 
@@ -152,7 +152,7 @@ MonoBehaviour:
   enableLogging: 0
   logEveryNFrames: 30
   logSampleCount: 5
-  drawGizmos: 0
+  drawGizmos: 1
   gizmoMaxDots: 5000
   gizmoSize: 0.5
   coldColor: {r: 0.2, g: 0.6, b: 1, a: 0.9}
@@ -179,7 +179,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 102119718}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 602be22576fb5c64f9c21644dee09d97, type: 3}
   m_Name: 
@@ -358,23 +358,20 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   target: {fileID: 396053711}
-  blurRadius: 2
+  width: 512
+  height: 512
+  sampleStride: 4
+  useLog: 1
   exposure: 1
-  okGradient:
-    keys:
-    - color: {r: 0.05, g: 0.08, b: 0.2, a: 1}
-      t: 0
-    - color: {r: 0, g: 0.7, b: 1, a: 1}
-      t: 0.5
-    - color: {r: 1, g: 0.65, b: 0.2, a: 1}
-      t: 0.85
-    - color: {r: 1, g: 1, b: 1, a: 1}
-      t: 1
-  blackClip: 0.02
-  whiteClip: 0
-  lowBlendRange: 0.06
+  reinhard: 0
   gamma: 0.9
-  logSmoothing: 0.9
+  pctLow: 0.01
+  pctHigh: 0.995
+  ema: 0.9
+  oklabStop0: {r: 0.04, g: 0.07, b: 0.2, a: 1}
+  oklabStop1: {r: 0.01, g: 0.45, b: 0.85, a: 1}
+  oklabStop2: {r: 0.98, g: 0.82, b: 0.3, a: 1}
+  oklabStop3: {r: 1, g: 0.98, b: 0.97, a: 1}
 --- !u!114 &396053711
 MonoBehaviour:
   m_ObjectHideFlags: 0
