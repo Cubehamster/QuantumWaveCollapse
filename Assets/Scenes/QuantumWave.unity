@@ -128,7 +128,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 102119720}
-  - component: {fileID: 102119719}
   - component: {fileID: 102119721}
   m_Layer: 0
   m_Name: Diagnostics
@@ -137,26 +136,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &102119719
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 102119718}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f584493de39f0f342970ed55b11e3ea2, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  enableLogging: 0
-  logEveryNFrames: 30
-  logSampleCount: 5
-  drawGizmos: 1
-  gizmoMaxDots: 5000
-  gizmoSize: 0.5
-  coldColor: {r: 0.2, g: 0.6, b: 1, a: 0.9}
-  hotColor: {r: 1, g: 0.35, b: 0.2, a: 0.9}
 --- !u!4 &102119720
 Transform:
   m_ObjectHideFlags: 0
@@ -179,14 +158,16 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 102119718}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 602be22576fb5c64f9c21644dee09d97, type: 3}
+  m_Script: {fileID: 11500000, guid: cb172f59a12718b438e0bd31918a54d7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  color: {r: 1, g: 0.6, b: 0, a: 0.9}
-  fill: 0
-  onlyWhenPlaying: 1
+  boundsColor: {r: 0.2, g: 1, b: 0.3, a: 0.5}
+  centerColor: {r: 1, g: 0.3, b: 0.3, a: 1}
+  centerCrossSize: 2
+  drawSimBounds: 1
+  drawCenter: 1
 --- !u!1 &330585543
 GameObject:
   m_ObjectHideFlags: 0
@@ -249,7 +230,7 @@ Camera:
   far clip plane: 1000
   field of view: 60
   orthographic: 1
-  orthographic size: 256
+  orthographic size: 512
   m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
@@ -336,8 +317,9 @@ GameObject:
   - component: {fileID: 396053713}
   - component: {fileID: 396053712}
   - component: {fileID: 396053711}
-  - component: {fileID: 396053710}
   - component: {fileID: 396053715}
+  - component: {fileID: 396053716}
+  - component: {fileID: 396053717}
   m_Layer: 0
   m_Name: Canvas
   m_TagString: Untagged
@@ -345,33 +327,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &396053710
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 396053709}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2c16190f5acf37c4cbdc654d13f403dc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  target: {fileID: 396053711}
-  width: 512
-  height: 512
-  sampleStride: 4
-  useLog: 1
-  exposure: 1
-  reinhard: 0
-  gamma: 0.9
-  pctLow: 0.01
-  pctHigh: 0.995
-  ema: 0.9
-  oklabStop0: {r: 0.04, g: 0.07, b: 0.2, a: 1}
-  oklabStop1: {r: 0.01, g: 0.45, b: 0.85, a: 1}
-  oklabStop2: {r: 0.98, g: 0.82, b: 0.3, a: 1}
-  oklabStop3: {r: 1, g: 0.98, b: 0.97, a: 1}
 --- !u!114 &396053711
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -384,7 +339,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1344c3c82d62a2a41a3576d8abb8e3ea, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  m_Material: {fileID: 0}
+  m_Material: {fileID: 2100000, guid: 2ce76b4b308ffa34ca0a01b0d99a423e, type: 2}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
@@ -417,7 +372,7 @@ Canvas:
   m_Enabled: 1
   serializedVersion: 3
   m_RenderMode: 2
-  m_Camera: {fileID: 0}
+  m_Camera: {fileID: 330585545}
   m_PlaneDistance: 100
   m_PixelPerfect: 0
   m_ReceivesEvents: 1
@@ -447,7 +402,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 512, y: 512}
+  m_SizeDelta: {x: 1920, y: 1080}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &396053715
 MonoBehaviour:
@@ -461,13 +416,81 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 28e3c9fb38846ee41a60e0e847aabc7a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  fireMode: 1
-  rateHz: 60
-  verboseLogging: 0
-  radius: 20
-  pushRadius: 50
-  pushStrength: 50
-  viewCamera: {fileID: 330585545}
+  cam: {fileID: 330585545}
+  planeZ: 0
+  radius: 100
+  pushStrength: 5000
+  logEvents: 0
+  mode: 0
+--- !u!114 &396053716
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 396053709}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 00a3a01a2a223184eb0a6c06e0089134, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  target: {fileID: 396053711}
+  densityCS: {fileID: 7200000, guid: 3f1b7f642e44dbc42b6dea30e111b1c5, type: 3}
+  densityMaterial: {fileID: 2100000, guid: 2ce76b4b308ffa34ca0a01b0d99a423e, type: 2}
+  densityShader: {fileID: 4800000, guid: 3e4d3a257f6fbba4d9af53c5c91d0919, type: 3}
+  texWidth: 1920
+  texHeight: 1080
+  background: {r: 1, g: 1, b: 1, a: 1}
+  exposureK: 0.05
+  gamma: 2
+  blurRadius: 50
+  blurSigma: 0
+  srgbGradient:
+    serializedVersion: 2
+    key0: {r: 0.05, g: 0.08, b: 0.2, a: 1}
+    key1: {r: 0, g: 0.7, b: 1, a: 1}
+    key2: {r: 1, g: 0.65, b: 0.2, a: 0}
+    key3: {r: 1, g: 1, b: 1, a: 0}
+    key4: {r: 0, g: 0, b: 0, a: 0}
+    key5: {r: 0, g: 0, b: 0, a: 0}
+    key6: {r: 0, g: 0, b: 0, a: 0}
+    key7: {r: 0, g: 0, b: 0, a: 0}
+    ctime0: 0
+    ctime1: 32768
+    ctime2: 55705
+    ctime3: 65535
+    ctime4: 0
+    ctime5: 0
+    ctime6: 0
+    ctime7: 0
+    atime0: 0
+    atime1: 65535
+    atime2: 0
+    atime3: 0
+    atime4: 0
+    atime5: 0
+    atime6: 0
+    atime7: 0
+    m_Mode: 0
+    m_ColorSpace: -1
+    m_NumColorKeys: 4
+    m_NumAlphaKeys: 2
+  debugTestPattern: 0
+--- !u!114 &396053717
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 396053709}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1868dfe5dabc3ae40a37579d14a38eb3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  prevBinding: <Keyboard>/leftArrow, <Keyboard>/a, <Gamepad>/dpad/left, <Gamepad>/leftShoulder
+  nextBinding: <Keyboard>/rightArrow, <Keyboard>/d, <Gamepad>/dpad/right, <Gamepad>/rightShoulder
+  autoAlignAngle: 0
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0

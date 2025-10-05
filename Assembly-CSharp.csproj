@@ -75,31 +75,38 @@
   <ItemGroup>
     <Compile Include="Assets\DensityBuildSystem.cs" />
     <Compile Include="Assets\Rng.cs" />
-    <Compile Include="Assets\Quantum.Params2D.cs" />
+    <Compile Include="Assets\SimpleWalkerSpawner.cs" />
+    <Compile Include="Assets\SimpleWalkerSpawnerAuthoring.cs" />
     <Compile Include="Assets\MeasurementSystem.cs" />
+    <Compile Include="Assets\ActualParticleSystem.cs" />
+    <Compile Include="Assets\LangevinWalkSystem.cs" />
     <Compile Include="Assets\MeasurementClick.cs" />
-    <Compile Include="Assets\DMCResampleSystem.cs" />
-    <Compile Include="Assets\Quantum.DMC2DSystem.cs" />
-    <Compile Include="Assets\DMCAdaptiveErefEveryFrameSystem.cs" />
-    <Compile Include="Assets\QuantumParams2DAuthoring.cs" />
-    <Compile Include="Assets\DMCControl2DAuthoring.cs" />
+    <Compile Include="Assets\OrbitalConfig.cs" />
+    <Compile Include="Assets\GPUDensityRenderer.cs" />
     <Compile Include="Assets\BoundsGizmo2D.cs" />
-    <Compile Include="Assets\PositionsReader.cs" />
-    <Compile Include="Assets\Particles.PositionsExportSystem.cs" />
+    <Compile Include="Assets\SimBounds2DAuthoring.cs" />
+    <Compile Include="Assets\PositionsUploadSystem.cs" />
     <Compile Include="Assets\Particles.SimulateSystem.cs" />
     <Compile Include="Assets\Particles.Components.cs" />
+    <Compile Include="Assets\WalkerTag.cs" />
     <Compile Include="Assets\DensityField2D.cs" />
+    <Compile Include="Assets\CollapseAttractorSystem.cs" />
     <Compile Include="Assets\EnsureVelocitySystem.cs" />
     <Compile Include="Assets\Particles.SpawnerAuthoring.cs" />
+    <Compile Include="Assets\CollapseAttractor.cs" />
+    <Compile Include="Assets\MouseToClickRequest.cs" />
     <Compile Include="Assets\TutorialInfo\Scripts\Readme.cs" />
+    <Compile Include="Assets\OrbitalAuthoring.cs" />
     <Compile Include="Assets\Particles.SpawnSystem.cs" />
-    <Compile Include="Assets\MeasurementResultLoggerSystem.cs" />
-    <Compile Include="Assets\DensityPresenter.cs" />
+    <Compile Include="Assets\OrbitalPresetCycler.cs" />
+    <Compile Include="Assets\OrbitalScore.cs" />
     <Compile Include="Assets\e Authoring.TestSpawner2D.cs" />
+    <Compile Include="Assets\SimGizmos.cs" />
+    <Compile Include="Assets\OrbitalParams2D.cs" />
     <Compile Include="Assets\Particles.RandomState.cs" />
     <Compile Include="Assets\DensityField2DAuthoring.cs" />
-    <Compile Include="Assets\SpawnRequestDetector2D.cs" />
-    <Compile Include="Assets\SpawnRequestDeepProbe2D.cs" />
+    <Compile Include="Assets\DensityPresenterSimple.cs" />
+    <Compile Include="Assets\MeasurementRequest.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Assets\TextMesh Pro\Shaders\TMPro.cginc" />
@@ -122,8 +129,10 @@
     <None Include="Assets\TextMesh Pro\Shaders\TMP_SDF-Mobile Masking.shader" />
     <None Include="Assets\TextMesh Pro\Shaders\TMP_SDF Overlay.shader" />
     <None Include="Assets\TextMesh Pro\Shaders\TMP_Bitmap-Mobile.shader" />
+    <None Include="Assets\DensityToColor.shader" />
     <None Include="Assets\TextMesh Pro\Fonts\LiberationSans - OFL.txt" />
     <None Include="Assets\TextMesh Pro\Shaders\TMP_SDF-Mobile.shader" />
+    <None Include="Assets\GPUDensity.compute" />
     <None Include="Assets\TextMesh Pro\Shaders\TMP_Sprite.shader" />
   </ItemGroup>
   <ItemGroup>

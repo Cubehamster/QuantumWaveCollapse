@@ -128,9 +128,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1933164173}
-  - component: {fileID: 1933164172}
-  - component: {fileID: 1933164174}
   - component: {fileID: 1933164175}
+  - component: {fileID: 1933164174}
   - component: {fileID: 1933164176}
   m_Layer: 0
   m_Name: ParticleSpawner
@@ -139,26 +138,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1933164172
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1933164171}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e6e433a0c3ef802478076e397dc9aa92, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  Count: 2000000
-  Center: {x: 0, y: 0}
-  Extents: {x: 256, y: 256}
-  MinSpeed: 5
-  MaxSpeed: 30
-  MinWeight: 0.8
-  MaxWeight: 1.2
-  Seed: 0
 --- !u!4 &1933164173
 Transform:
   m_ObjectHideFlags: 0
@@ -183,17 +162,13 @@ MonoBehaviour:
   m_GameObject: {fileID: 1933164171}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c798cff45786ec24593874551c3d976b, type: 3}
+  m_Script: {fileID: 11500000, guid: 2c2b271f236df9a419a8bd2cf8f031ee, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  DeltaTau: 0.005
-  Diffusion: 500
-  ERef: 1
-  BoundaryMode: 0
-  Type: 0
-  Omega: 0.03
-  DoubleWellA: 1
-  DoubleWellB: 2
+  count: 1000000
+  seed: 12345
+  initMode: 1
+  gaussianSigma: 0.5
 --- !u!114 &1933164175
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -203,12 +178,21 @@ MonoBehaviour:
   m_GameObject: {fileID: 1933164171}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a9e39becd52f5b44e9dadc8cccb476ac, type: 3}
+  m_Script: {fileID: 11500000, guid: a5f7289e0cb553646b34cc4792995576, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  Width: 256
-  Height: 256
-  Eps: 1e-10
+  preset: 0
+  a0: 40
+  center: {x: 0, y: 0}
+  angleDeg: 0
+  scoreClamp: 20
+  epsilon: 2
+  diffusion: 8
+  dtScale: 200
+  velocityDamping: 0.8
+  forceAccel: 20
+  maxSpeed: 4
+  collapseJitterFrac: 0.01
 --- !u!114 &1933164176
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -218,13 +202,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 1933164171}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 65e06e957be5cda45a3ea9a564634287, type: 3}
+  m_Script: {fileID: 11500000, guid: 974c3dca4d6337445aae81133a78dd61, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  BranchEveryFrames: 30
-  ResampleSlices: 10
-  CloneJitterSigma: 0.001
-  Kappa: 0.4
+  center: {x: 0, y: 0}
+  extents: {x: 960, y: 540}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

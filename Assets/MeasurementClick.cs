@@ -1,186 +1,161 @@
-﻿// MeasurementClick.cs — hold-to-scan version (Input System)
+﻿// MeasurementClick.cs
+// Reads mouse from the *New* Input System and publishes a ClickRequest singleton
+// for MeasurementSystem. Works in orthographic or perspective; assumes XY plane (z=0).
+
 using UnityEngine;
 using Unity.Entities;
 using Unity.Mathematics;
-using UnityEngine.InputSystem;
+using UnityEngine.InputSystem;   // <-- New Input System
 
-public class MeasurementClick : MonoBehaviour
+public struct ClickRequest : IComponentData
 {
-    public enum FireMode { OnPress, WhileHeld }
+    public float2 WorldPos;
+    public float Radius;
+    public float PushStrength;
+    public bool IsPressed;
+    public bool EdgeDown;
+    public bool EdgeUp;
+}
+
+public enum ClickMode
+{
+    HoldToPush,
+    PressOnceToPush
+}
+
+[DisallowMultipleComponent]
+public sealed class MeasurementClick : MonoBehaviour
+{
+    [Header("Camera & plane")]
+    public Camera cam;                // leave null to use Camera.main
+    [Tooltip("XY plane Z value used for screen->world. 0 is typical for 2D.")]
+    public float planeZ = 0f;
+
+    [Header("Interaction")]
+    [Min(0f)] public float radius = 0.25f;
+    [Min(0f)] public float pushStrength = 25f;
+
+    [Header("Debug")]
+    public bool logEvents = false;
+
+    // ECS
+    EntityManager _em;
+    Entity _singleton;
+    bool _haveSingleton;
+
+    // Cached button edge state (we derive from InputSystem each frame)
+    bool _prevPressed;
 
     [Header("Mode")]
-    [Tooltip("OnPress = one measurement on click.\nWhileHeld = continuous measurements while the button is down.")]
-    public FireMode fireMode = FireMode.WhileHeld;
+    public ClickMode mode = ClickMode.HoldToPush;
 
-    [Tooltip("How many measurements per second when holding the button (WhileHeld mode).")]
-    [Range(1, 120)] public int rateHz = 30;
-
-    [Tooltip("Optional logs to Console.")]
-    public bool verboseLogging = false;
-
-    [Header("Measurement")]
-    [Tooltip("Primary measurement radius (world units).")]
-    public float radius = 0.8f;
-
-    [Tooltip("Push effect radius (world units). Particles within (radius, pushRadius] are pushed outward on failure.")]
-    public float pushRadius = 2.0f;
-
-    [Tooltip("Outward displacement applied to near particles on failure (world units at center, falls off to 0 at pushRadius).")]
-    public float pushStrength = 0.75f;
-
-    [Header("Mapping")]
-    [Tooltip("Camera used to map screen -> viewport; defaults to Camera.main.")]
-    public Camera viewCamera;
-
-    // internal
-    float _interval;
-    float _accum;
-    Vector2 _lastWorldPos;
-    bool _haveLast;
-
-    void Awake()
+    void OnEnable()
     {
-        if (viewCamera == null) viewCamera = Camera.main;
-        _interval = 1f / Mathf.Max(1, rateHz);
+        if (cam == null) cam = Camera.main;
+
+        var world = World.DefaultGameObjectInjectionWorld;
+        if (world == null)
+        {
+            Debug.LogError("[MeasurementClick] No Default World");
+            enabled = false; return;
+        }
+
+        _em = world.EntityManager;
+
+        // Create or find the singleton entity holding ClickRequest
+        var q = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequest>());
+        if (q.CalculateEntityCount() == 0)
+        {
+            _singleton = _em.CreateEntity(typeof(ClickRequest));
+            _em.SetName(_singleton, "ClickRequestSingleton");
+            _haveSingleton = true;
+        }
+        else
+        {
+            _singleton = q.GetSingletonEntity();
+            _haveSingleton = true;
+        }
     }
 
-    void OnValidate()
+    void OnDisable()
     {
-        _interval = 1f / Mathf.Max(1, rateHz);
-        pushRadius = Mathf.Max(pushRadius, radius);
+        // Keep the singleton around; MeasurementSystem expects it.
+        // If you prefer to remove it on disable, uncomment:
+        // if (_haveSingleton && _em.Exists(_singleton)) _em.DestroyEntity(_singleton);
+        _haveSingleton = false;
     }
 
     void Update()
     {
-        // Active input?
+        if (!_haveSingleton || !_em.Exists(_singleton)) return;
+
+        // Use New Input System mouse
         var mouse = Mouse.current;
-        var touch = Touchscreen.current;
+        if (mouse == null) return; // no mouse device
 
-        bool pressedThisFrame =
-            (mouse != null && mouse.leftButton.wasPressedThisFrame) ||
-            (touch != null && touch.primaryTouch.press.wasPressedThisFrame);
+        bool pressed, edgeDown, edgeUp;
 
-        bool isHeld =
-            (mouse != null && mouse.leftButton.isPressed) ||
-            (touch != null && touch.primaryTouch.press.isPressed);
-
-        // Fire on press (immediate)
-        if (fireMode == FireMode.OnPress && pressedThisFrame)
+        if (mode == ClickMode.HoldToPush)
         {
-            if (TryGetScreenPos(out Vector2 sp) && TryMapToWorld(sp, out float2 worldPos))
-            {
-                EnqueueRequest(worldPos);
-                if (verboseLogging) Debug.Log($"[Measure/Hold] OnPress @ {worldPos}");
-            }
+            pressed = mouse.leftButton.isPressed;
+            edgeDown = mouse.leftButton.wasPressedThisFrame;
+            edgeUp = mouse.leftButton.wasReleasedThisFrame;
+        }
+        else // PressOnceToPush: single pulse per click
+        {
+            pressed = mouse.leftButton.wasPressedThisFrame;
+            edgeDown = pressed;
+            edgeUp = false;
         }
 
-        // Fire continuously while held
-        if (fireMode == FireMode.WhileHeld && isHeld)
+        // Screen → world (XY plane at z = planeZ)
+        Vector2 screen = mouse.position.ReadValue();
+        float2 worldXY = ScreenToWorldXY(screen, planeZ);
+
+        var req = new ClickRequest
         {
-            _accum += Time.deltaTime;
-            while (_accum >= _interval)
-            {
-                _accum -= _interval;
-                if (TryGetScreenPos(out Vector2 sp) && TryMapToWorld(sp, out float2 worldPos))
-                {
-                    EnqueueRequest(worldPos);
-                    if (verboseLogging) Debug.Log($"[Measure/Hold] WhileHeld tick @ {worldPos}");
-                }
-                else break; // mapping failed; don't spin
-            }
+            WorldPos = worldXY,
+            Radius = radius,
+            PushStrength = pushStrength,
+            IsPressed = pressed,
+            EdgeDown = edgeDown,
+            EdgeUp = edgeUp
+        };
+
+        _em.SetComponentData(_singleton, req);
+
+        if (logEvents && (edgeDown || edgeUp || pressed != _prevPressed))
+        {
+            Debug.Log($"[Click] pressed={pressed} down={edgeDown} up={edgeUp}  world={worldXY}  R={radius} push={pushStrength}");
         }
 
-        // Reset the accumulator on release so the next hold fires immediately
-        bool releasedThisFrame =
-            (mouse != null && mouse.leftButton.wasReleasedThisFrame) ||
-            (touch != null && touch.primaryTouch.press.wasReleasedThisFrame);
-
-        if (releasedThisFrame) _accum = 0f;
+        _prevPressed = pressed;
     }
 
-    // ----- Input helpers -----
-
-    bool TryGetScreenPos(out Vector2 screenPos)
+    float2 ScreenToWorldXY(Vector2 screen, float zPlane)
     {
-        if (Mouse.current != null && Mouse.current.leftButton.isPressed)
+        if (cam == null) cam = Camera.main;
+        if (cam == null)
         {
-            screenPos = Mouse.current.position.ReadValue();
-            return true;
+            // Fallback: identity mapping if no camera
+            return screen;
         }
-        if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.isPressed)
+
+        if (cam.orthographic)
         {
-            screenPos = Touchscreen.current.primaryTouch.position.ReadValue();
-            return true;
+            Vector3 wp = cam.ScreenToWorldPoint(new Vector3(screen.x, screen.y, cam.nearClipPlane));
+            // For ortho, Z is ignored; project to XY plane at zPlane
+            return new float2(wp.x, wp.y);
         }
-        screenPos = default;
-        return false;
-    }
-
-    bool TryMapToWorld(Vector2 screenPos, out float2 worldPos)
-    {
-        worldPos = default;
-
-        var world = World.DefaultGameObjectInjectionWorld;
-        if (world == null) return false;
-
-        var em = world.EntityManager;
-        var qBounds = em.CreateEntityQuery(ComponentType.ReadOnly<SimBounds2D>());
-        if (qBounds.IsEmpty) return false;
-
-        var sim = qBounds.GetSingleton<SimBounds2D>();
-        float2 minB = sim.Center - sim.Extents;
-        float2 maxB = sim.Center + sim.Extents;
-
-        Vector3 vp = (viewCamera != null)
-            ? viewCamera.ScreenToViewportPoint(new Vector3(screenPos.x, screenPos.y, 0f))
-            : new Vector3(screenPos.x / Screen.width, screenPos.y / Screen.height, 0f);
-
-        vp.x = Mathf.Clamp01(vp.x);
-        vp.y = Mathf.Clamp01(vp.y);
-
-        worldPos = minB + new float2(vp.x, vp.y) * (maxB - minB);
-        _lastWorldPos = worldPos; _haveLast = true;
-        return true;
-    }
-
-    void EnqueueRequest(float2 worldPos)
-    {
-        var world = World.DefaultGameObjectInjectionWorld;
-        if (world == null) return;
-
-        var em = world.EntityManager;
-
-        var e = em.CreateEntity(typeof(MeasurementRequest));
-        em.SetComponentData(e, new MeasurementRequest
+        else
         {
-            Center = worldPos,
-            Radius = Mathf.Max(1e-4f, radius),
-            PushRadius = Mathf.Max(Mathf.Max(1e-4f, radius), pushRadius),
-            PushStrength = Mathf.Max(0f, pushStrength),
-            Seed = (uint)UnityEngine.Random.Range(1, int.MaxValue)
-        });
-    }
-
-    // ----- Debug rings -----
-    void OnDrawGizmos()
-    {
-        if (!_haveLast) return;
-        Gizmos.color = Color.yellow;
-        DrawCircle(_lastWorldPos, radius, 64);
-        Gizmos.color = new Color(0.3f, 1f, 0.3f);
-        DrawCircle(_lastWorldPos, pushRadius, 64);
-    }
-
-    void DrawCircle(Vector2 c, float r, int seg)
-    {
-        if (seg < 3) seg = 3;
-        Vector3 prev = new Vector3(c.x + r, c.y, 0f);
-        for (int i = 1; i <= seg; i++)
-        {
-            float a = (i / (float)seg) * Mathf.PI * 2f;
-            Vector3 cur = new Vector3(c.x + r * Mathf.Cos(a), c.y + r * Mathf.Sin(a), 0f);
-            Gizmos.DrawLine(prev, cur);
-            prev = cur;
+            // Perspective: ray-plane intersection with z = zPlane
+            Ray r = cam.ScreenPointToRay(screen);
+            // plane normal (0,0,1), point (0,0,zPlane): solve r.origin.z + t * r.dir.z = zPlane
+            float denom = r.direction.z;
+            float t = (Mathf.Abs(denom) < 1e-6f) ? 0f : (zPlane - r.origin.z) / denom;
+            Vector3 p = r.origin + t * r.direction;
+            return new float2(p.x, p.y);
         }
     }
 }

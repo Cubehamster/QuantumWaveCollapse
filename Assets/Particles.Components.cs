@@ -8,13 +8,6 @@ public struct ParticleTag : IComponentData { }
 public struct Position : IComponentData { public float2 Value; }
 public struct Velocity : IComponentData { public float2 Value; }
 
-// Axis-aligned 2D bounds: [Center-Extents, Center+Extents] in XY
-public struct SimBounds2D : IComponentData
-{
-    public float2 Center;
-    public float2 Extents; // half-size (>= 0)
-}
-
 // Runtime spawn request (2D). Speed is scalar.
 public struct SpawnRequest : IComponentData
 {

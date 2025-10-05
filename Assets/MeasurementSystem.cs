@@ -1,331 +1,200 @@
-﻿// MeasurementSystem.cs — probability check + alias-safe in-place recycle + decaying ClickForce
-using Unity.Burst;
+﻿using Unity.Burst;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;   // NativeSetThreadIndex / DisableParallelForRestriction
 using Unity.Entities;
-using Unity.Jobs.LowLevel.Unsafe;         // JobsUtility.MaxJobThreadCount
 using Unity.Mathematics;
 using UnityEngine;
 
-public struct MeasurementRequest : IComponentData
-{
-    public float2 Center;
-    public float Radius;        // measurement radius
-    public float PushRadius;    // outer influence radius for ClickForce
-    public float PushStrength;  // ClickForce acceleration magnitude near inner radius (units/s^2)
-    public uint Seed;          // RNG seed for Bernoulli trial
-}
-
-public struct MeasurementResult : IComponentData
-{
-    public float2 Center;
-    public float Radius;
-    public float InsideWeight;
-    public float TotalWeight;
-    public float Probability;
-    public int InsideCount;
-    public int DestroyedCount; // used as RecycledCount for compatibility
-    public byte Success; // 1 = "particle was here", 0 = not
-}
-
-/// Decaying radial force spawned per request (read by DMC2DSystem to accelerate particles over time).
-public struct ClickForce : IComponentData
-{
-    public float2 Center;
-    public float InnerRadius;
-    public float OuterRadius;
-    public float Strength;      // accel near InnerRadius (units/s^2)
-    public float DecaySeconds;  // 1/e decay time
-    public double StartTime;     // Time.ElapsedTime at spawn
-}
-
-/// Marker added to walkers chosen for recycling, holds the donor entity.
-public struct RecycleMarker : IComponentData
-{
-    public Entity Donor;
-}
-
+/// <summary>
+/// Handles measurement clicks: during press it attracts particles (suction),
+/// while released it repels. On success, particles collapse smoothly inward.
+/// </summary>
 [WorldSystemFilter(WorldSystemFilterFlags.Default)]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
-[UpdateAfter(typeof(DMC2DSystem))]          // after diffusion/weight update
-[UpdateBefore(typeof(DensityBuildSystem))]  // so density sees recycled walkers immediately
+[UpdateAfter(typeof(LangevinWalkSystem))]
 public partial struct MeasurementSystem : ISystem
 {
+    EntityQuery _walkersQ;
     EntityQuery _reqQ;
-    EntityQuery _walkerQ;
-    EntityQuery _markedQ;
 
     public void OnCreate(ref SystemState state)
     {
-        _reqQ = state.GetEntityQuery(ComponentType.ReadOnly<MeasurementRequest>());
-
-        // Walkers we operate on:
-        _walkerQ = state.GetEntityQuery(
+        _walkersQ = state.GetEntityQuery(
             ComponentType.ReadOnly<ParticleTag>(),
             ComponentType.ReadOnly<Position>(),
-            ComponentType.ReadOnly<Weight>(),
-            ComponentType.ReadOnly<Velocity>(),
-            ComponentType.ReadOnly<RandomState>());
+            ComponentType.ReadWrite<Force>());
 
-        // Marked walkers (after mark phase)
-        _markedQ = state.GetEntityQuery(
-            ComponentType.ReadOnly<RecycleMarker>(),
-            ComponentType.ReadWrite<Position>(),
-            ComponentType.ReadWrite<Weight>(),
-            ComponentType.ReadWrite<Velocity>(),
-            ComponentType.ReadWrite<RandomState>());
-
-        state.RequireForUpdate(_walkerQ);
+        _reqQ = state.GetEntityQuery(ComponentType.ReadOnly<ClickRequest>());
     }
 
     public void OnUpdate(ref SystemState state)
     {
-        if (_reqQ.IsEmpty) return;
+        if (_reqQ.IsEmptyIgnoreFilter) return;
+        var req = _reqQ.GetSingleton<ClickRequest>();
 
-        var requests = _reqQ.ToComponentDataArray<MeasurementRequest>(Allocator.Temp);
-        var reqEntities = _reqQ.ToEntityArray(Allocator.Temp);
+        int N = _walkersQ.CalculateEntityCount();
+        if (N == 0) return;
 
-        int walkerCount = _walkerQ.CalculateEntityCount();
-        if (walkerCount == 0)
+        float2 c = req.WorldPos;
+        float R = req.Radius;
+        float R2 = R * R;
+
+        // During press → suction (negative force)
+        if (req.IsPressed && req.PushStrength != 0f)
         {
-            var ecbNow = new EntityCommandBuffer(Allocator.Temp);
-            for (int i = 0; i < reqEntities.Length; i++) ecbNow.DestroyEntity(reqEntities[i]);
-            ecbNow.Playback(state.EntityManager);
-            ecbNow.Dispose();
-            requests.Dispose(); reqEntities.Dispose();
-            Debug.LogWarning("[Measure] No walkers present.");
-            return;
+            var pushJob = new PushJob
+            {
+                Center = c,
+                R2 = R2,
+                Strength = -math.abs(req.PushStrength) // pull inward
+            };
+            state.Dependency = pushJob.ScheduleParallel(state.Dependency);
         }
 
-        // ---- Sum total weight (parallel reduction) ----
-        var partialTotal = new NativeArray<double>(JobsUtility.MaxJobThreadCount, Allocator.TempJob, NativeArrayOptions.ClearMemory);
-        state.Dependency = new SumWeightsJob { Partial = partialTotal }.ScheduleParallel(state.Dependency);
-        state.Dependency.Complete();
-        double totalW = 0.0;
-        for (int i = 0; i < partialTotal.Length; i++) totalW += partialTotal[i];
-        partialTotal.Dispose();
-
-        // Donor pool (entities) for recycling; read-only in mark job & later on main thread
-        var donors = _walkerQ.ToEntityArray(Allocator.TempJob);
-
-        for (int r = 0; r < requests.Length; r++)
+        // On release → outward push
+        if (req.EdgeUp)
         {
-            var req = requests[r];
-            float2 C = req.Center;
-            float R = math.max(1e-6f, req.Radius);
-            float Rpush = math.max(R, req.PushRadius);
-
-            // Inside sums and counts (parallel)
-            var partialInside = new NativeArray<double>(JobsUtility.MaxJobThreadCount, Allocator.TempJob, NativeArrayOptions.ClearMemory);
-            var partialCountI = new NativeArray<int>(JobsUtility.MaxJobThreadCount, Allocator.TempJob, NativeArrayOptions.ClearMemory);
-
-            state.Dependency = new SumInsideJob
+            var pushJob = new PushJob
             {
-                Center = C,
-                Radius2 = R * R,
-                Partial = partialInside,
-                Count = partialCountI
-            }.ScheduleParallel(state.Dependency);
+                Center = c,
+                R2 = R2,
+                Strength = math.abs(req.PushStrength) // outward explosion
+            };
+            state.Dependency = pushJob.ScheduleParallel(state.Dependency);
             state.Dependency.Complete();
 
-            double insideW = 0.0; int insideCount = 0;
-            for (int i = 0; i < partialInside.Length; i++) insideW += partialInside[i];
-            for (int i = 0; i < partialCountI.Length; i++) insideCount += partialCountI[i];
-            partialInside.Dispose(); partialCountI.Dispose();
-
-            // Probability & Bernoulli
-            float p = (float)(insideW / math.max(1e-12, totalW));
-            p = math.saturate(p);
-            var rng = Unity.Mathematics.Random.CreateFromIndex(req.Seed != 0 ? req.Seed : 1u);
-            bool success = rng.NextFloat() < p;
-
-            int recycled = 0;
-
-            if (!success && insideCount > 0 && donors.IsCreated && donors.Length > 0)
+            // Count inside radius
+            var insideCount = new NativeArray<int>(1, Allocator.TempJob, NativeArrayOptions.ClearMemory);
+            var countJob = new CountInsideJob
             {
-                // --- Phase 1: mark all inside with a RecycleMarker (donor chosen per entity) ---
-                var ecb = new EntityCommandBuffer(Allocator.TempJob);
-                state.Dependency = new MarkRecycleInsideJob
+                Center = c,
+                R2 = R2,
+                Counter = insideCount
+            };
+            state.Dependency = countJob.ScheduleParallel(state.Dependency);
+            state.Dependency.Complete();
+
+            int inside = insideCount[0];
+            insideCount.Dispose();
+            float p = (float)inside / math.max(1, N);
+
+            // check if actual particle is inside radius
+            bool success = false;
+            if (SystemAPI.HasSingleton<ActualParticle>())
+            {
+                var ap = SystemAPI.GetSingleton<ActualParticle>();
+                if (state.EntityManager.Exists(ap.Walker) &&
+                    state.EntityManager.HasComponent<Position>(ap.Walker))
                 {
-                    Center = C,
-                    Radius2 = R * R,
-                    Donors = donors,
-                    ECB = ecb.AsParallelWriter()
-                }.ScheduleParallel(state.Dependency);
-                state.Dependency.Complete();
-
-                ecb.Playback(state.EntityManager);
-                ecb.Dispose();
-
-                // --- Phase 2: apply recycling on main thread (copy donor data, then remove marker) ---
-                var em = state.EntityManager;
-                var marked = _markedQ.ToEntityArray(Allocator.TempJob);
-
-                // Use direct component access on main thread (safe & simple)
-                for (int i = 0; i < marked.Length; i++)
-                {
-                    var e = marked[i];
-                    var m = em.GetComponentData<RecycleMarker>(e);
-                    if (!em.Exists(m.Donor)) continue; // donor might have been removed, rare
-
-                    // Read donor state
-                    var dPos = em.GetComponentData<Position>(m.Donor);
-                    var dW = em.GetComponentData<Weight>(m.Donor);
-                    var dVel = em.GetComponentData<Velocity>(m.Donor);
-                    var dRnd = em.GetComponentData<RandomState>(m.Donor);
-
-                    // Tiny jitter to avoid exact duplicates
-                    var rloc = Unity.Mathematics.Random.CreateFromIndex((uint)(dRnd.Value ^ (uint)i + 1u));
-                    float2 jitter = 0.001f * new float2(rloc.NextFloat(-1f, 1f), rloc.NextFloat(-1f, 1f));
-
-                    // Write into target
-                    var tPos = em.GetComponentData<Position>(e);
-                    tPos.Value = dPos.Value + jitter;
-                    em.SetComponentData(e, tPos);
-
-                    var tW = em.GetComponentData<Weight>(e);
-                    tW.Value = math.max(1e-8f, dW.Value);
-                    em.SetComponentData(e, tW);
-
-                    var tVel = em.GetComponentData<Velocity>(e);
-                    tVel.Value = dVel.Value;
-                    em.SetComponentData(e, tVel);
-
-                    var tRnd = em.GetComponentData<RandomState>(e);
-                    uint newSeed = dRnd.Value ^ rloc.NextUInt();
-                    if (newSeed == 0u) newSeed = 1u;
-                    tRnd.Value = newSeed;
-                    em.SetComponentData(e, tRnd);
-
-                    // Remove marker
-                    em.RemoveComponent<RecycleMarker>(e);
-
-                    recycled++;
+                    float2 apPos = state.EntityManager.GetComponentData<Position>(ap.Walker).Value;
+                    success = math.lengthsq(apPos - c) <= R2;
                 }
-
-                marked.Dispose();
             }
 
-            // Spawn a decaying radial ClickForce (handled by DMC2DSystem)
+            if (success)
             {
-                var ecbForce = new EntityCommandBuffer(Allocator.Temp);
-                var fe = ecbForce.CreateEntity();
-                ecbForce.AddComponent(fe, new ClickForce
-                {
-                    Center = C,
-                    InnerRadius = R,
-                    OuterRadius = Rpush,
-                    Strength = req.PushStrength,
-                    DecaySeconds = 0.40f,
-                    StartTime = SystemAPI.Time.ElapsedTime
-                });
-                ecbForce.Playback(state.EntityManager);
-                ecbForce.Dispose();
-            }
+                //var lp = SystemAPI.GetSingleton<LangevinParams2D>();
+                //var op = SystemAPI.GetSingleton<OrbitalParams2D>();
+                //float jitter = lp.CollapseJitterFrac * math.max(1e-3f, op.A0);
 
-            // Emit result (optional)
+                //var collapseJob = new CollapseJob
+                //{
+                //    Center = c,
+                //    JitterSigma = jitter
+                //};
+                //state.Dependency = collapseJob.ScheduleParallel(state.Dependency);
+                //state.Dependency.Complete();
+
+                Debug.Log($"[Measure] SUCCESS  p≈{Round3(p)}  collapsed @ {c}");
+            }
+            else
             {
-                var ecbRes = new EntityCommandBuffer(Allocator.Temp);
-                var resE = ecbRes.CreateEntity();
-                ecbRes.AddComponent(resE, new MeasurementResult
-                {
-                    Center = C,
-                    Radius = R,
-                    InsideWeight = (float)insideW,
-                    TotalWeight = (float)totalW,
-                    Probability = p,
-                    InsideCount = insideCount,
-                    DestroyedCount = recycled, // recycled count
-                    Success = (byte)(success ? 1 : 0)
-                });
-                ecbRes.Playback(state.EntityManager);
-                ecbRes.Dispose();
+                Debug.Log($"[Measure] FAIL     p≈{Round3(p)}  pushed @ {c}");
             }
-
-            // Consume request
-            var ecbReq = new EntityCommandBuffer(Allocator.Temp);
-            ecbReq.DestroyEntity(reqEntities[r]);
-            ecbReq.Playback(state.EntityManager);
-            ecbReq.Dispose();
-
-            Debug.Log($"[Measure] center={C} R={R} totalW={totalW:0.###} insideW={insideW:0.###} p={p:0.#####} success={success} recycled={recycled}");
-        }
-
-        donors.Dispose();
-        requests.Dispose();
-        reqEntities.Dispose();
-    }
-
-    // ---------------- Jobs ----------------
-
-    [BurstCompile]
-    [WithAll(typeof(ParticleTag))]
-    public partial struct SumWeightsJob : IJobEntity
-    {
-        [NativeDisableParallelForRestriction] public NativeArray<double> Partial;
-        [NativeSetThreadIndex] int ti;
-
-        public void Execute(in Weight w)
-        {
-            int idx = ti - 1; if (idx < 0) idx = 0; if (idx >= Partial.Length) idx = Partial.Length - 1;
-            float v = w.Value;
-            if (math.isfinite(v) && v > 0f) Partial[idx] += v;
         }
     }
 
+    static float Round3(float v) => math.round(v * 1000f) * 0.001f;
+
+    // ----------------------------------------------------------------------
+    //  JOBS
+    // ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Applies a circular smooth force (inward if Strength < 0, outward if > 0).
+    /// </summary>
     [BurstCompile]
     [WithAll(typeof(ParticleTag))]
-    public partial struct SumInsideJob : IJobEntity
+    public partial struct PushJob : IJobEntity
     {
         public float2 Center;
-        public float Radius2;
+        public float R2;
+        public float Strength;
 
-        [NativeDisableParallelForRestriction] public NativeArray<double> Partial;
-        [NativeDisableParallelForRestriction] public NativeArray<int> Count;
-        [NativeSetThreadIndex] int ti;
-
-        public void Execute(in Position pos, in Weight w)
+        public void Execute(ref Force f, in Position pos)
         {
-            int idx = ti - 1; if (idx < 0) idx = 0; if (idx >= Partial.Length) idx = Partial.Length - 1;
             float2 d = pos.Value - Center;
-            if (math.lengthsq(d) <= Radius2)
+            float d2 = math.lengthsq(d);
+            if (d2 > R2) return;
+
+            float r = math.sqrt(math.max(1e-12f, d2));
+            float2 dir = d / r;
+
+            // Smooth circular falloff (quadratic)
+            float t = 1f - math.saturate(r / math.sqrt(R2));
+            float2 forceVec = dir * (Strength * t * t); // smooth attractor/repulsor
+
+            f.Value += forceVec;
+        }
+    }
+
+    [BurstCompile]
+    [WithAll(typeof(ParticleTag))]
+    public partial struct CountInsideJob : IJobEntity
+    {
+        public float2 Center;
+        public float R2;
+        [NativeDisableParallelForRestriction] public NativeArray<int> Counter;
+
+        public void Execute(in Position pos)
+        {
+            if (math.lengthsq(pos.Value - Center) <= R2)
             {
-                float v = w.Value;
-                if (math.isfinite(v) && v > 0f) Partial[idx] += v;
-                Count[idx] += 1;
+                // approximate increment (benign race)
+                Counter[0] = Counter[0] + 1;
             }
         }
     }
 
-    /// Phase 1 (job): mark all walkers inside the radius with a RecycleMarker that stores the chosen donor.
     [BurstCompile]
     [WithAll(typeof(ParticleTag))]
-    public partial struct MarkRecycleInsideJob : IJobEntity
+    public partial struct CollapseJob : IJobEntity
     {
         public float2 Center;
-        public float Radius2;
+        public float JitterSigma;
 
-        [ReadOnly] public NativeArray<Entity> Donors;
-        public EntityCommandBuffer.ParallelWriter ECB;
+        static uint Sanitize(uint s) => (s == 0u || s == 0xFFFFFFFFu) ? 1u : s;
 
-        public void Execute([EntityIndexInQuery] int sortKey, Entity e, in Position pos, ref RandomState rnd)
+        static float2 Gaussian2(ref Unity.Mathematics.Random rng)
         {
-            float2 d = pos.Value - Center;
-            if (math.lengthsq(d) > Radius2) return;
+            float u1 = math.max(1e-7f, rng.NextFloat());
+            float u2 = rng.NextFloat();
+            float r = math.sqrt(-2f * math.log(u1));
+            float a = 2f * math.PI * u2;
+            return new float2(r * math.cos(a), r * math.sin(a));
+        }
 
-            // Use each entity's RNG to pick a donor
-            var r = Unity.Mathematics.Random.CreateFromIndex(math.max(1u, rnd.Value));
-            int idx = (Donors.Length > 0) ? r.NextInt(Donors.Length) : 0;
-            if (idx < 0) idx = 0;
-            if (idx >= Donors.Length) return;
+        public void Execute(ref Position pos, ref Velocity vel, ref RandomState rnd)
+        {
+            uint seed = Sanitize(rnd.Value);
+            var rng = Unity.Mathematics.Random.CreateFromIndex(seed);
 
-            Entity donor = Donors[idx];
+            float2 jitter = (JitterSigma > 0f) ? JitterSigma * Gaussian2(ref rng) : float2.zero;
 
-            // Optionally decorrelate RNG here (we also reseed in apply phase)
-            uint newSeed = r.NextUInt(); if (newSeed == 0u) newSeed = 1u;
-            rnd.Value = newSeed;
+            // Implosion: move toward center with jitter
+            pos.Value = math.lerp(pos.Value, Center + jitter, 0.3f); // 0.3 for soft collapse
+            vel.Value *= 0.2f;
 
-            ECB.AddComponent(sortKey, e, new RecycleMarker { Donor = donor });
+            rnd.Value = Sanitize(rng.state);
         }
     }
 }
