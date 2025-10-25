@@ -186,10 +186,10 @@ MonoBehaviour:
   a0: 40
   center: {x: 0, y: 0}
   angleDeg: 0
-  scoreClamp: 20
+  scoreClamp: 5.9
   epsilon: 2
-  diffusion: 8
-  dtScale: 200
+  diffusion: 30
+  dtScale: 50
   velocityDamping: 0.8
   forceAccel: 20
   maxSpeed: 4

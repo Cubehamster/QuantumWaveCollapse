@@ -1,44 +1,63 @@
-﻿// ActualParticleDotUI.cs
-using UnityEngine;
-using UnityEngine.UI;
-using Unity.Mathematics;
-using Unity.Collections;
+﻿using System.Collections.Generic;
 using Unity.Entities;
-using UnityEngine.InputSystem; // New Input System
+using Unity.Mathematics;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 /// <summary>
-/// Shows a small UI dot following the ActualParticlePosition (singleton).
-/// Toggle visibility with 'C'.
+/// Draws UI dots over the density RawImage for each "actual particle".
+/// - Uses multi-actual buffer ActualParticlePositionElement when available.
+/// - Falls back to legacy ActualParticlePosition singleton (single dot).
+/// - Press 'C' to toggle visibility (New Input System).
+/// - Positions are mapped from world coords via SimBounds2D to overlayRect space.
 /// </summary>
-public sealed class ActualParticleDotUI : MonoBehaviour
+[DisallowMultipleComponent]
+public sealed class ActualParticlesDotsUI : MonoBehaviour
 {
-    [Header("Hook up")]
-    [Tooltip("RawImage that displays the density (same one used by GPUDensityRenderer).")]
-    public RawImage densityImage;
+    [Header("Where to draw (same rect as your density RawImage)")]
+    [Tooltip("RectTransform area where dots should be placed (usually the RawImage RectTransform).")]
+    public RectTransform overlayRect;
 
-    [Tooltip("A small UI Image (e.g., a 6x6 circle) that will be moved over the density image.")]
-    public RectTransform dot;
+    [Header("Dot look")]
+    public Sprite dotSprite;
+    public Color dotColor = new Color(1f, 0.2f, 0.2f, 0.95f);
+    [Min(1f)] public float dotDiameter = 10f;
+    [Tooltip("Optional per-dot outline (requires 'UI/Default' material support).")]
+    public bool useOutline = false;
+    [Range(0f, 8f)] public float outlineSize = 2f;
+    public Color outlineColor = new Color(0f, 0f, 0f, 0.9f);
 
-    [Header("Appearance")]
-    [Tooltip("Radius in pixels of the dot (if 'dot' has a Layout/Size, this is ignored).")]
-    public float pixelSize = Screen.height/50;
-    public Color dotColor = Color.white;
+    [Header("Behavior")]
+    [Tooltip("Toggle visibility at start.")]
+    public bool visible = true;
+    [Tooltip("Max number of dots to show (safeguard). 0 = unlimited.")]
+    public int maxDots = 0;
 
-    [Header("Toggle")]
-    [Tooltip("Start with the dot visible?")]
-    public bool startVisible = true;
-
-    // ECS access
+    // ECS
     EntityManager _em;
     EntityQuery _boundsQ;
-    EntityQuery _posQ;
+    EntityQuery _cfgQ;      // multi-actual config entity: ActualParticleSet + ActualParticlePositionElement buffer
+    EntityQuery _legacyQ;   // legacy single: ActualParticlePosition
+
+    // Pool of UI objects (children under overlayRect)
+    readonly List<RectTransform> _dotRects = new List<RectTransform>();
+    readonly List<Image> _dotImages = new List<Image>();
+    readonly List<Outline> _outlines = new List<Outline>();
 
     void OnEnable()
     {
+        if (overlayRect == null)
+        {
+            Debug.LogError("[ActualParticlesDotsUI] Assign 'overlayRect' (the RectTransform you want to draw onto). Disabling.");
+            enabled = false;
+            return;
+        }
+
         var world = World.DefaultGameObjectInjectionWorld;
         if (world == null)
         {
-            Debug.LogError("[ActualParticleDotUI] No Default World in scene.");
+            Debug.LogError("[ActualParticlesDotsUI] No Default World. Disabling.");
             enabled = false;
             return;
         }
@@ -46,82 +65,195 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         _em = world.EntityManager;
 
         _boundsQ = _em.CreateEntityQuery(ComponentType.ReadOnly<SimBounds2D>());
-        _posQ = _em.CreateEntityQuery(ComponentType.ReadOnly<ActualParticlePosition>());
+        _cfgQ = _em.CreateEntityQuery(
+            ComponentType.ReadOnly<ActualParticleSet>(),
+            ComponentType.ReadOnly<ActualParticleRef>(),          // buffer exists on cfg
+            ComponentType.ReadOnly<ActualParticlePositionElement>()); // positions buffer exists on cfg
 
-        if (densityImage == null)
-        {
-            Debug.LogError("[ActualParticleDotUI] Please assign 'densityImage' (the RawImage used for density).");
-            enabled = false;
-            return;
-        }
-        if (dot == null)
-        {
-            Debug.LogError("[ActualParticleDotUI] Please assign 'dot' (a small UI Image/RectTransform).");
-            enabled = false;
-            return;
-        }
+        _legacyQ = _em.CreateEntityQuery(ComponentType.ReadOnly<ActualParticlePosition>());
 
-        // Initialize dot
-        var img = dot.GetComponent<Image>();
-        if (img != null) img.color = dotColor;
+        // Start with visibility state
+        ApplyVisibility();
+    }
 
-        // Ensure size if no layout
-        dot.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, pixelSize);
-        dot.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, pixelSize);
-
-        dot.gameObject.SetActive(startVisible);
-
-        // Make sure the dot is a child of the density image so local coords line up
-        if (dot.transform.parent != densityImage.rectTransform)
-            dot.SetParent(densityImage.rectTransform, worldPositionStays: false);
+    void OnDisable()
+    {
+        ClearPool();
     }
 
     void Update()
     {
-        // Toggle with 'C' (new Input System)
         if (Keyboard.current != null && Keyboard.current.cKey.wasPressedThisFrame)
         {
-            dot.gameObject.SetActive(!dot.gameObject.activeSelf);
+            visible = !visible;
+            ApplyVisibility();
         }
 
-        if (!dot.gameObject.activeSelf)
-            return;
+        if (!visible) return;
 
-        if (_boundsQ.IsEmptyIgnoreFilter || _posQ.IsEmptyIgnoreFilter)
-            return;
+        if (_boundsQ.IsEmptyIgnoreFilter) return; // need bounds for mapping
+        var bounds = _boundsQ.GetSingleton<SimBounds2D>();
+        float2 minB = bounds.Center - bounds.Extents;
+        float2 sizeB = math.max(new float2(1e-6f, 1e-6f), bounds.Extents * 2f);
 
-        // Read SimBounds2D + ActualParticlePosition
-        float2 center, extents, ap;
-        using (var bArr = _boundsQ.ToComponentDataArray<SimBounds2D>(Allocator.Temp))
-        using (var pArr = _posQ.ToComponentDataArray<ActualParticlePosition>(Allocator.Temp))
+        // Gather positions either from multi-actual buffer or legacy singleton
+        int count = 0;
+        float2[] posArray = null;
+
+        if (!_cfgQ.IsEmptyIgnoreFilter)
         {
-            var b = bArr[0];
-            var p = pArr[0];
-            center = b.Center;
-            extents = b.Extents;
-            ap = p.Value;
+            // Use first config
+            var cfgEnt = _cfgQ.ToEntityArray(Unity.Collections.Allocator.Temp)[0];
+            var posBuf = _em.GetBuffer<ActualParticlePositionElement>(cfgEnt);
+            count = posBuf.Length;
+
+            if (maxDots > 0) count = Mathf.Min(count, maxDots);
+
+            if (count > 0)
+            {
+                posArray = new float2[count];
+                for (int i = 0; i < count; i++)
+                    posArray[i] = posBuf[i].Value;
+            }
+        }
+        else if (!_legacyQ.IsEmptyIgnoreFilter)
+        {
+            var ap = _legacyQ.GetSingleton<ActualParticlePosition>();
+            count = 1;
+            posArray = new[] { ap.Value };
+        }
+        else
+        {
+            // Nothing to draw
+            SetPoolSize(0);
+            return;
         }
 
-        // World -> UV mapping (same as compute shader)
-        float2 minB = center - extents;
-        float2 sizeB = extents * 2f;
-        float2 invSz = new float2(
-            1f / Mathf.Max(1e-6f, sizeB.x),
-            1f / Mathf.Max(1e-6f, sizeB.y)
-        );
+        SetPoolSize(count);
+        Vector2 canvasSize = overlayRect.rect.size;
 
-        float2 uv = (ap - minB) * invSz; // 0..1
-        uv = math.saturate(uv);
+        for (int i = 0; i < count; i++)
+        {
+            float2 p = posArray[i];
+            float2 uv = (p - minB) / sizeB;          // 0..1
+            Vector2 anchor = new Vector2(uv.x * canvasSize.x, uv.y * canvasSize.y);
 
-        // UV -> local anchored position in densityImage rect
-        RectTransform rt = densityImage.rectTransform;
-        Rect r = rt.rect; // local rect
-        // local origin for anchoredPosition is rect center (0,0)
-        Vector2 local = new Vector2(
-            (uv.x - 0.5f) * r.width,
-            (uv.y - 0.5f) * r.height
-        );
+            _dotRects[i].anchoredPosition = anchor;
+        }
+    }
 
-        dot.anchoredPosition = local;
+    // ----------------- Pool management -----------------
+
+    void ApplyVisibility()
+    {
+        if (overlayRect == null) return;
+        overlayRect.gameObject.SetActive(visible);
+    }
+
+    void ClearPool()
+    {
+        for (int i = 0; i < _dotRects.Count; i++)
+            if (_dotRects[i] != null) Destroy(_dotRects[i].gameObject);
+
+        _dotRects.Clear();
+        _dotImages.Clear();
+        _outlines.Clear();
+    }
+
+    void SetPoolSize(int needed)
+    {
+        if (needed < 0) needed = 0;
+
+        // add if needed
+        while (_dotRects.Count < needed)
+            CreateDot();
+
+        // disable extra
+        for (int i = 0; i < _dotRects.Count; i++)
+        {
+            bool active = i < needed;
+            if (_dotRects[i] != null && _dotRects[i].gameObject.activeSelf != active)
+                _dotRects[i].gameObject.SetActive(active);
+
+            // keep look up-to-date
+            if (i < needed) StyleDot(i);
+        }
+    }
+
+    void CreateDot()
+    {
+        GameObject go = new GameObject("ActualDot", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        go.transform.SetParent(overlayRect, false);
+
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.zero;
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(dotDiameter, dotDiameter);
+
+        var img = go.GetComponent<Image>();
+        img.raycastTarget = false;
+
+        if (dotSprite != null)
+        {
+            img.sprite = dotSprite;
+            img.type = Image.Type.Simple;
+            img.preserveAspect = true;
+        }
+
+        Outline outline = null;
+        if (useOutline)
+        {
+            outline = go.AddComponent<Outline>();
+        }
+
+        _dotRects.Add(rt);
+        _dotImages.Add(img);
+        _outlines.Add(outline);
+
+        StyleDot(_dotRects.Count - 1);
+    }
+
+    void StyleDot(int i)
+    {
+        if (i < 0 || i >= _dotRects.Count) return;
+
+        var rt = _dotRects[i];
+        var img = _dotImages[i];
+        var ol = _outlines[i];
+
+        if (rt != null) rt.sizeDelta = new Vector2(dotDiameter, dotDiameter);
+        if (img != null)
+        {
+            img.color = dotColor;
+            if (dotSprite != null)
+            {
+                img.sprite = dotSprite;
+                img.type = Image.Type.Simple;
+                img.preserveAspect = true;
+            }
+        }
+
+        if (useOutline)
+        {
+            if (ol == null && rt != null)
+            {
+                ol = rt.gameObject.AddComponent<Outline>();
+                _outlines[i] = ol;
+            }
+            if (ol != null)
+            {
+                ol.effectColor = outlineColor;
+                ol.effectDistance = new Vector2(outlineSize, -outlineSize);
+            }
+        }
+        else
+        {
+            if (ol != null)
+            {
+                Destroy(ol);
+                _outlines[i] = null;
+            }
+        }
     }
 }

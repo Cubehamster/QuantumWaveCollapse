@@ -7,14 +7,14 @@ using Unity.Collections;
 public class GPUDensityRenderer : MonoBehaviour
 {
     [Header("Hook up")]
-    public RawImage target;                 // assign your RawImage
-    public ComputeShader densityCS;         // assign GPUDensity.compute
+    public RawImage target;
+    public ComputeShader densityCS;
 
-    [Tooltip("Optional: provide a pre-made material that uses the DensityToColor shader.")]
+    [Tooltip("Optional material using the DensityToColor shader.")]
     public Material densityMaterial;
 
-    [Tooltip("Optional fallback if you don’t assign a material. Must reference the same shader used by DensityToColor.mat.")]
-    public Shader densityShader;            // e.g. the “Hidden/DensityToColor” shader asset
+    [Tooltip("Fallback if no material is assigned—drag the DensityToColor Shader asset here.")]
+    public Shader densityShader;
 
     [Header("Texture")]
     public int texWidth = 1024;
@@ -22,10 +22,10 @@ public class GPUDensityRenderer : MonoBehaviour
 
     [Header("World mapping")]
     public Color background = new Color(0.02f, 0.03f, 0.08f, 1f);
-    public float exposureK = 0.01f;         // exp mapping: 1-exp(-k*density)
-    public float gamma = 0.9f;              // final gamma
-    public int blurRadius = 2;              // 0 = off (uses copy)
-    [Range(0f, 64f)] public float blurSigma = 0f; // 0 = auto (radius * 0.5)
+    public float exposureK = 0.01f;
+    public float gamma = 0.9f;
+    public int blurRadius = 2;
+    [Range(0f, 64f)] public float blurSigma = 0f;
 
     [Header("Gradient (sRGB LUT baked here)")]
     public Gradient srgbGradient = DefaultGradient();
@@ -35,19 +35,21 @@ public class GPUDensityRenderer : MonoBehaviour
 
     // runtime
     Material _mat;
-    RenderTexture _countsU32;   // R32_UInt
-    RenderTexture _tempF;       // R16 or RFloat
-    RenderTexture _densityF;    // R16 or RFloat (final float density)
-    Texture2D _lutTex;          // 256x1 LUT
+    RenderTexture _countsU32;   // RInt
+    RenderTexture _tempF;       // RFloat
+    RenderTexture _densityF;    // RFloat
+    Texture2D _lutTex;
     ComputeBuffer _posBuffer;
 
-    int kClear, kScatter, kBlurH, kBlurV, kCopy;
+    int kClear = -1, kScatter = -1, kBlurH = -1, kBlurV = -1, kCopy = -1;
 
     PositionsUploadSystem _posSys;
 
-    // ECS access
+    // ECS
     EntityManager _em;
     EntityQuery _boundsQ;
+
+    bool _kernelsValid = false;
 
     void OnEnable()
     {
@@ -85,39 +87,41 @@ public class GPUDensityRenderer : MonoBehaviour
             kBlurH = densityCS.FindKernel("BlurH");
             kBlurV = densityCS.FindKernel("BlurV");
             kCopy = densityCS.FindKernel("CopyCountsToFloat");
+
+            _kernelsValid = (kClear >= 0 && kScatter >= 0 && kBlurH >= 0 && kBlurV >= 0 && kCopy >= 0);
         }
-        catch
+        catch (System.Exception e)
         {
-            Debug.LogError("[GPUDensityRenderer] Kernel not found in compute shader. Double-check kernel names.");
+            Debug.LogError("[GPUDensityRenderer] Kernel not found / shader compile failed: " + e.Message);
+            _kernelsValid = false;
+        }
+
+        if (!_kernelsValid)
+        {
+            Debug.LogError("[GPUDensityRenderer] Compute shader kernels are invalid. Disabling.");
             enabled = false;
             return;
         }
 
         AllocateRTs();
+        SetupMaterial();
+    }
 
-        // Material & shader setup (robust for Player builds)
+    void SetupMaterial()
+    {
         if (densityMaterial != null)
         {
             _mat = Instantiate(densityMaterial);
         }
         else
         {
-            Shader sh = densityShader;
+            Shader sh = densityShader ? densityShader : Shader.Find("Hidden/DensityToColor");
             if (sh == null)
             {
-                // Last-resort lookup (can be stripped in Player if not referenced elsewhere)
-                sh = Shader.Find("Hidden/DensityToColor");
-            }
-
-            if (sh == null)
-            {
-                Debug.LogError("[GPUDensityRenderer] No material assigned and shader not found. " +
-                               "Create a Material that uses your DensityToColor shader and assign it in the Inspector, " +
-                               "or drag the Shader asset into 'densityShader'. Disabling.");
+                Debug.LogError("[GPUDensityRenderer] No material or shader found for density display. Disabling.");
                 enabled = false;
                 return;
             }
-
             _mat = new Material(sh);
         }
 
@@ -135,7 +139,6 @@ public class GPUDensityRenderer : MonoBehaviour
         {
             target.texture = _densityF;
             target.material = _mat;
-            // Ensure RawImage shows unmodified color
             target.color = Color.white;
         }
     }
@@ -156,13 +159,11 @@ public class GPUDensityRenderer : MonoBehaviour
         ReleaseRT(ref _tempF);
         ReleaseRT(ref _densityF);
 
-        _countsU32 = new RenderTexture(texWidth, texHeight, 0, RenderTextureFormat.RFloat)
-        {
-            enableRandomWrite = true
-        };
+        // Integer scatter buffer for atomic adds
+        _countsU32 = new RenderTexture(texWidth, texHeight, 0, RenderTextureFormat.RInt)
+        { enableRandomWrite = true };
         _countsU32.Create();
 
-        // Use RFloat instead of RHalf – more widely supported for UAV read/write in Player builds
         _tempF = new RenderTexture(texWidth, texHeight, 0, RenderTextureFormat.RFloat)
         { enableRandomWrite = true };
         _tempF.Create();
@@ -180,6 +181,7 @@ public class GPUDensityRenderer : MonoBehaviour
     void LateUpdate()
     {
         if (!enabled) return;
+        if (!_kernelsValid) return;
         if (_posSys == null || !_posSys.HasData) return;
         if (_boundsQ.IsEmptyIgnoreFilter) return;
         if (_countsU32 == null || _densityF == null) return;
@@ -209,14 +211,13 @@ public class GPUDensityRenderer : MonoBehaviour
             _posBuffer = new ComputeBuffer(count, sizeof(float) * 2, ComputeBufferType.Structured);
         }
 
-        // upload positions
         _posBuffer.SetData(positions);
 
-        // clear counts
+        // Clear
         densityCS.SetTexture(kClear, "_Counts", _countsU32);
         Dispatch2D(kClear, texWidth, texHeight, 8, 8);
 
-        // scatter
+        // Scatter
         densityCS.SetTexture(kScatter, "_Counts", _countsU32);
         densityCS.SetBuffer(kScatter, "_Positions", _posBuffer);
         densityCS.SetInts("_TexSize", texWidth, texHeight);
@@ -225,20 +226,11 @@ public class GPUDensityRenderer : MonoBehaviour
         densityCS.SetInt("_Num", count);
         Dispatch1D(kScatter, count, 256);
 
-        if (!densityCS.HasKernel("CopyCountsToFloat"))
-            Debug.LogError("Kernel CopyCountsToFloat not found!");
-
-        int texID = Shader.PropertyToID("_CountsIn");
-        if (texID == -1)
-            Debug.LogError("Property _CountsIn not found on shader!");
-
-        // Gaussian blur (separable) OR copy
+        // Blur or copy
         if (blurRadius > 0)
         {
-            // auto sigma if not provided
             float sigma = (blurSigma > 0f) ? blurSigma : Mathf.Max(0.5f, blurRadius * 0.5f);
 
-            // Horizontal pass
             densityCS.SetTexture(kBlurH, "_CountsIn", _countsU32);
             densityCS.SetTexture(kBlurH, "_Out", _tempF);
             densityCS.SetInts("_TexSize", texWidth, texHeight);
@@ -246,7 +238,6 @@ public class GPUDensityRenderer : MonoBehaviour
             densityCS.SetFloat("_Sigma", sigma);
             Dispatch2D(kBlurH, texWidth, texHeight, 8, 8);
 
-            // Vertical pass
             densityCS.SetTexture(kBlurV, "_InFloat", _tempF);
             densityCS.SetTexture(kBlurV, "_Out", _densityF);
             densityCS.SetInts("_TexSize", texWidth, texHeight);
@@ -256,7 +247,6 @@ public class GPUDensityRenderer : MonoBehaviour
         }
         else
         {
-            // your existing copy path (unchanged)
             if (_countsU32 == null || !_countsU32.IsCreated()) return;
             if (_densityF == null || !_densityF.IsCreated()) return;
 
@@ -266,21 +256,16 @@ public class GPUDensityRenderer : MonoBehaviour
             Dispatch2D(kCopy, texWidth, texHeight, 8, 8);
         }
 
-
-
-        if (debugTestPattern)
+        // Debug pattern (optional)
+        if (debugTestPattern && densityCS.HasKernel("TestPattern"))
         {
-            // Optional: if you added a TestPattern kernel in your compute, draw it here.
-            int kt;
-            if (TryKernel("TestPattern", out kt))
-            {
-                densityCS.SetTexture(kt, "_Out", _densityF);
-                densityCS.SetInts("_TexSize", texWidth, texHeight);
-                Dispatch2D(kt, texWidth, texHeight, 8, 8);
-            }
+            int kt = densityCS.FindKernel("TestPattern");
+            densityCS.SetTexture(kt, "_Out", _densityF);
+            densityCS.SetInts("_TexSize", texWidth, texHeight);
+            Dispatch2D(kt, texWidth, texHeight, 8, 8);
         }
 
-        // material params
+        // Material params
         if (_mat)
         {
             _mat.SetTexture("_Density", _densityF);
@@ -290,21 +275,16 @@ public class GPUDensityRenderer : MonoBehaviour
         }
     }
 
-    bool TryKernel(string name, out int id)
-    {
-        id = -1;
-        try { id = densityCS.FindKernel(name); return true; }
-        catch { return false; }
-    }
-
     void Dispatch1D(int kernel, int count, int threadGroupSize)
     {
+        if (kernel < 0) return;
         int groups = Mathf.Max(1, (count + threadGroupSize - 1) / threadGroupSize);
         densityCS.Dispatch(kernel, groups, 1, 1);
     }
 
     void Dispatch2D(int kernel, int w, int h, int tx, int ty)
     {
+        if (kernel < 0) return;
         int gx = (w + tx - 1) / tx;
         int gy = (h + ty - 1) / ty;
         densityCS.Dispatch(kernel, gx, gy, 1);

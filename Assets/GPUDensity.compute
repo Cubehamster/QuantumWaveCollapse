@@ -1,3 +1,6 @@
+// GPUDensity.compute
+// Separable Gaussian (or copy) over an integer scatter buffer.
+
 #pragma kernel ClearCounts
 #pragma kernel ScatterPoints
 #pragma kernel BlurH
@@ -5,41 +8,38 @@
 #pragma kernel CopyCountsToFloat
 #pragma kernel TestPattern
 
-// =============== RESOURCES ===============
-RWTexture2D<float> _Counts; // accumulation buffer
-Texture2D<float> _CountsIn; // SRV input for blur or copy
-Texture2D<float> _InFloat; // SRV input for vertical blur
-RWTexture2D<float> _Out; // UAV output
-StructuredBuffer<float2> _Positions; // particle positions
+// ===== Resources =====
+RWTexture2D<uint> _Counts; // integer UAV (RInt)
+Texture2D<uint> _CountsIn; // SRV for blur/copy reads
+Texture2D<float> _InFloat; // SRV for vertical blur
+RWTexture2D<float> _Out; // float UAV output
+StructuredBuffer<float2> _Positions;
 
-// =============== PARAMETERS ===============
+// ===== Params =====
 int2 _TexSize;
 int _Num;
 float2 _MinB;
 float2 _InvSize;
 int _Radius;
-float _Sigma; // Gaussian sigma (if <= 0, computed from radius)
+float _Sigma;
 
-// =============== UTILITIES ===============
+// ===== Utils =====
 float GaussianWeight(int k, float sigma)
 {
     float kk = (float) (k * k);
-    float denom = 2.0 * sigma * sigma;
-    return exp(-kk / max(1e-8, denom));
+    float denom = 2.0 * max(1e-8, sigma * sigma);
+    return exp(-kk / denom);
 }
 
-// =============== KERNELS ===============
-
-// ---- Clear all counts ----
+// ===== Kernels =====
 [numthreads(8, 8, 1)]
 void ClearCounts(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= _TexSize.x || id.y >= _TexSize.y)
         return;
-    _Counts[int2(id.xy)] = 0.0;
+    _Counts[int2(id.xy)] = 0u;
 }
 
-// ---- Scatter particle positions into counts ----
 [numthreads(256, 1, 1)]
 void ScatterPoints(uint3 id : SV_DispatchThreadID)
 {
@@ -51,11 +51,10 @@ void ScatterPoints(uint3 id : SV_DispatchThreadID)
     float2 uv = saturate((p - _MinB) * _InvSize);
     int2 pix = int2(uv * (float2) (_TexSize - 1));
 
-    float v = _Counts[pix];
-    _Counts[pix] = v + 1.0;
+    // atomic increment into integer buffer
+    InterlockedAdd(_Counts[pix], 1u);
 }
 
-// ---- Horizontal Gaussian blur ----
 [numthreads(8, 8, 1)]
 void BlurH(uint3 id : SV_DispatchThreadID)
 {
@@ -64,9 +63,10 @@ void BlurH(uint3 id : SV_DispatchThreadID)
 
     int2 p = int2(id.xy);
     int r = _Radius;
+
     if (r <= 0)
     {
-        _Out[p] = _CountsIn.Load(int3(p, 0)).r;
+        _Out[p] = (float) _CountsIn.Load(int3(p, 0)).r;
         return;
     }
 
@@ -81,7 +81,7 @@ void BlurH(uint3 id : SV_DispatchThreadID)
     {
         int x = clamp(p.x + k, 0, w - 1);
         float wgt = GaussianWeight(k, sigma);
-        float val = _CountsIn.Load(int3(x, p.y, 0)).r;
+        float val = (float) _CountsIn.Load(int3(x, p.y, 0)).r;
         acc += val * wgt;
         wsum += wgt;
     }
@@ -89,7 +89,6 @@ void BlurH(uint3 id : SV_DispatchThreadID)
     _Out[p] = acc / max(1e-8, wsum);
 }
 
-// ---- Vertical Gaussian blur ----
 [numthreads(8, 8, 1)]
 void BlurV(uint3 id : SV_DispatchThreadID)
 {
@@ -98,6 +97,7 @@ void BlurV(uint3 id : SV_DispatchThreadID)
 
     int2 p = int2(id.xy);
     int r = _Radius;
+
     if (r <= 0)
     {
         _Out[p] = _InFloat.Load(int3(p, 0)).r;
@@ -123,17 +123,16 @@ void BlurV(uint3 id : SV_DispatchThreadID)
     _Out[p] = acc / max(1e-8, wsum);
 }
 
-// ---- Copy counts to float (no blur) ----
 [numthreads(8, 8, 1)]
 void CopyCountsToFloat(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= _TexSize.x || id.y >= _TexSize.y)
         return;
     int2 p = int2(id.xy);
-    _Out[p] = _CountsIn.Load(int3(p, 0)).r;
+    _Out[p] = (float) _CountsIn.Load(int3(p, 0)).r;
 }
 
-// ---- Test pattern (for debugging) ----
+// Optional visual to confirm pipeline
 [numthreads(8, 8, 1)]
 void TestPattern(uint3 id : SV_DispatchThreadID)
 {
