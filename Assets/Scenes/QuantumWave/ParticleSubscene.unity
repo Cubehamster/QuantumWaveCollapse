@@ -131,6 +131,7 @@ GameObject:
   - component: {fileID: 1933164175}
   - component: {fileID: 1933164174}
   - component: {fileID: 1933164176}
+  - component: {fileID: 1933164177}
   m_Layer: 0
   m_Name: ParticleSpawner
   m_TagString: Untagged
@@ -206,7 +207,21 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   center: {x: 0, y: 0}
-  extents: {x: 960, y: 540}
+  extents: {x: 859.8, y: 462.1}
+--- !u!114 &1933164177
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1933164171}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 44c14d379cddcb544a93e06edf07481b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  desiredCount: 3
+  seed: 12345
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

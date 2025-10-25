@@ -33,7 +33,7 @@ public sealed class MeasurementClick : MonoBehaviour
 
     [Header("Interaction")]
     [Min(0f)] public float radius = 0.25f;
-    [Min(0f)] public float pushStrength = 25f;
+    public float pushStrength = 25f;
 
     [Header("Debug")]
     public bool logEvents = false;

@@ -36,9 +36,3 @@ public struct Force : IComponentData
 {
     public float2 Value;
 }
-
-/// <summary>Singleton holding the current “actual particle” (measurement target).</summary>
-public struct ActualParticle : IComponentData
-{
-    public Entity Walker;
-}

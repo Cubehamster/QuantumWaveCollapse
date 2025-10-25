@@ -80,6 +80,7 @@
     <Compile Include="Assets\MeasurementSystem.cs" />
     <Compile Include="Assets\ActualParticleSystem.cs" />
     <Compile Include="Assets\LangevinWalkSystem.cs" />
+    <Compile Include="Assets\ActualParticlesAuthoring.cs" />
     <Compile Include="Assets\MeasurementClick.cs" />
     <Compile Include="Assets\OrbitalConfig.cs" />
     <Compile Include="Assets\GPUDensityRenderer.cs" />
@@ -87,11 +88,13 @@
     <Compile Include="Assets\SimBounds2DAuthoring.cs" />
     <Compile Include="Assets\PositionsUploadSystem.cs" />
     <Compile Include="Assets\Particles.SimulateSystem.cs" />
-    <Compile Include="Assets\Particles.Components.cs" />
     <Compile Include="Assets\WalkerTag.cs" />
+    <Compile Include="Assets\Particles.Components.cs" />
     <Compile Include="Assets\DensityField2D.cs" />
+    <Compile Include="Assets\ActualParticle.cs" />
     <Compile Include="Assets\CollapseAttractorSystem.cs" />
     <Compile Include="Assets\EnsureVelocitySystem.cs" />
+    <Compile Include="Assets\ActualParticleDotUI.cs" />
     <Compile Include="Assets\Particles.SpawnerAuthoring.cs" />
     <Compile Include="Assets\CollapseAttractor.cs" />
     <Compile Include="Assets\MouseToClickRequest.cs" />
@@ -100,7 +103,7 @@
     <Compile Include="Assets\Particles.SpawnSystem.cs" />
     <Compile Include="Assets\OrbitalPresetCycler.cs" />
     <Compile Include="Assets\OrbitalScore.cs" />
-    <Compile Include="Assets\e Authoring.TestSpawner2D.cs" />
+    <Compile Include="Assets\ActualParticleInput.cs" />
     <Compile Include="Assets\SimGizmos.cs" />
     <Compile Include="Assets\OrbitalParams2D.cs" />
     <Compile Include="Assets\Particles.RandomState.cs" />

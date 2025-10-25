@@ -45,7 +45,7 @@ public partial struct MeasurementSystem : ISystem
             {
                 Center = c,
                 R2 = R2,
-                Strength = -math.abs(req.PushStrength) // pull inward
+                Strength = math.abs(req.PushStrength) // pull inward
             };
             state.Dependency = pushJob.ScheduleParallel(state.Dependency);
         }
