@@ -32,6 +32,7 @@ public struct OrbitalParams2D : IComponentData
     public float2 Center;        // world center
     public float Angle;          // radians
     public float DriftClamp;     // clamp |∇logρ| (0 = off)
+    public float Exposure;
 
     // --- Legacy aliases (kept for existing authoring/scripts) ---
     // Authoring sets these names; systems can read either.

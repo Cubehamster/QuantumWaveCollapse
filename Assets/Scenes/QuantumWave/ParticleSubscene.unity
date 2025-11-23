@@ -183,16 +183,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   preset: 0
-  a0: 40
+  a0: 100
   center: {x: 0, y: 0}
   angleDeg: 0
-  scoreClamp: 5.9
+  scoreClamp: 20
   epsilon: 2
-  diffusion: 30
-  dtScale: 50
-  velocityDamping: 0.8
-  forceAccel: 20
-  maxSpeed: 4
+  diffusion: 60
+  dtScale: 20
+  velocityDamping: 0
+  forceAccel: 100
+  maxSpeed: 20
   collapseJitterFrac: 0.01
 --- !u!114 &1933164176
 MonoBehaviour:
@@ -220,7 +220,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 44c14d379cddcb544a93e06edf07481b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  desiredCount: 3
+  desiredCount: 6
   seed: 12345
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

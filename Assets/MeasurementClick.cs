@@ -5,7 +5,8 @@
 using UnityEngine;
 using Unity.Entities;
 using Unity.Mathematics;
-using UnityEngine.InputSystem;   // <-- New Input System
+using UnityEngine.InputSystem;
+using Unity.VisualScripting;
 
 public struct ClickRequest : IComponentData
 {
@@ -15,6 +16,10 @@ public struct ClickRequest : IComponentData
     public bool IsPressed;
     public bool EdgeDown;
     public bool EdgeUp;
+
+    // NEW: how much larger the exclusion radius is relative to Radius.
+    // MeasurementSystem clamps this to ≥ 1.
+    public float ExclusionRadiusMultiplier;
 }
 
 public enum ClickMode
@@ -35,63 +40,130 @@ public sealed class MeasurementClick : MonoBehaviour
     [Min(0f)] public float radius = 0.25f;
     public float pushStrength = 25f;
 
+    [Tooltip("Actual particles inside R * ExclusionRadiusMultiplier are protected from push.")]
+    public float exclusionRadiusMultiplier = 1.5f;
+
     [Header("Debug")]
     public bool logEvents = false;
-
-    // ECS
-    EntityManager _em;
-    Entity _singleton;
-    bool _haveSingleton;
-
-    // Cached button edge state (we derive from InputSystem each frame)
-    bool _prevPressed;
 
     [Header("Mode")]
     public ClickMode mode = ClickMode.HoldToPush;
 
+    [Header("Cursor visuals")]
+    public Transform AimCursorPlayer1;
+    public Transform AimCursorPlayer2;
+    public Shapes.Disc Cursor1;
+    public Shapes.Disc Cursor2;
+    public Shapes.Disc Progress1;
+    public Shapes.Disc Progress2;
+    public float RotationSpeed = 10f;
+    public float progressSpeed = 1f;
+
+    // ECS
+    EntityManager _em;
+    Entity _clickSingleton;
+    bool _haveClickSingleton;
+
+    // For reading MeasurementResult
+    Entity _resultSingleton;
+    bool _haveResultSingleton;
+    MeasurementResult _lastResult;   // cached each frame
+
+    // Cached button edge state (we derive from InputSystem each frame)
+    bool _prevPressed;
+
     void OnEnable()
     {
         if (cam == null) cam = Camera.main;
+        Cursor.visible = false;
 
         var world = World.DefaultGameObjectInjectionWorld;
         if (world == null)
         {
             Debug.LogError("[MeasurementClick] No Default World");
-            enabled = false; return;
+            enabled = false;
+            return;
         }
 
         _em = world.EntityManager;
 
         // Create or find the singleton entity holding ClickRequest
-        var q = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequest>());
-        if (q.CalculateEntityCount() == 0)
         {
-            _singleton = _em.CreateEntity(typeof(ClickRequest));
-            _em.SetName(_singleton, "ClickRequestSingleton");
-            _haveSingleton = true;
+            var q = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequest>());
+            if (q.CalculateEntityCount() == 0)
+            {
+                _clickSingleton = _em.CreateEntity(typeof(ClickRequest));
+                _em.SetName(_clickSingleton, "ClickRequestSingleton");
+                _haveClickSingleton = true;
+            }
+            else
+            {
+                _clickSingleton = q.GetSingletonEntity();
+                _haveClickSingleton = true;
+            }
         }
-        else
+
+        // Try to find MeasurementResult singleton (MeasurementSystem creates it)
         {
-            _singleton = q.GetSingletonEntity();
-            _haveSingleton = true;
+            var qRes = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResult>());
+            if (qRes.CalculateEntityCount() > 0)
+            {
+                _resultSingleton = qRes.GetSingletonEntity();
+                _haveResultSingleton = true;
+            }
         }
     }
 
     void OnDisable()
     {
-        // Keep the singleton around; MeasurementSystem expects it.
-        // If you prefer to remove it on disable, uncomment:
-        // if (_haveSingleton && _em.Exists(_singleton)) _em.DestroyEntity(_singleton);
-        _haveSingleton = false;
+        _haveClickSingleton = false;
+        _haveResultSingleton = false;
+    }
+
+    void OnProgressComplete()
+    {
+        if (!_haveResultSingleton) return;
+        if (!_em.Exists(_resultSingleton)) return;
+
+        var result = _em.GetComponentData<MeasurementResult>(_resultSingleton);
+        int idx = result.ClosestActualIndex;
+        if (idx < 0) return; // no actual inside
+
+        // Fetch the config entity that holds the buffer
+        var qCfg = _em.CreateEntityQuery(
+            typeof(ActualParticleSet),
+            typeof(ActualParticleStatusElement)
+        );
+        if (qCfg.IsEmpty) return;
+
+        var cfgEntity = qCfg.GetSingletonEntity();
+        var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEntity);
+
+        // ************ DECISION LOGIC ***************
+        bool isGood = UnityEngine.Random.value > 0.5f;  // <-- replace with your real logic
+        statusBuf[idx] = new ActualParticleStatusElement
+        {
+            Value = isGood ? ActualParticleStatus.Good : ActualParticleStatus.Bad
+        };
     }
 
     void Update()
     {
-        if (!_haveSingleton || !_em.Exists(_singleton)) return;
+        if (!_haveClickSingleton || !_em.Exists(_clickSingleton)) return;
 
-        // Use New Input System mouse
+        // Ensure we have a result singleton reference (in case systems came up later).
+        if (!_haveResultSingleton)
+        {
+            var qRes = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResult>());
+            if (qRes.CalculateEntityCount() > 0)
+            {
+                _resultSingleton = qRes.GetSingletonEntity();
+                _haveResultSingleton = true;
+            }
+        }
+
         var mouse = Mouse.current;
-        if (mouse == null) return; // no mouse device
+        if (mouse == null) return;
 
         bool pressed, edgeDown, edgeUp;
 
@@ -112,6 +184,88 @@ public sealed class MeasurementClick : MonoBehaviour
         Vector2 screen = mouse.position.ReadValue();
         float2 worldXY = ScreenToWorldXY(screen, planeZ);
 
+        if (AimCursorPlayer1 != null)
+            AimCursorPlayer1.position = new Vector2(worldXY.x, worldXY.y);
+
+        // ---- Read MeasurementResult so we know if an actual is inside *exclusion* radius ----
+        bool hasActualInside = false;
+        if (_haveResultSingleton && _em.Exists(_resultSingleton))
+        {
+            _lastResult = _em.GetComponentData<MeasurementResult>(_resultSingleton);
+            hasActualInside = _lastResult.HasActualInRadius;
+        }
+
+        // ---- UI / cursor visuals ----
+        if (Cursor1 != null && AimCursorPlayer1 != null)
+        {
+            if (pressed)
+            {
+                //// Spin cursor while pressed
+                //Vector3 eulers = AimCursorPlayer1.rotation.eulerAngles;
+                //AimCursorPlayer1.eulerAngles = new Vector3(
+                //    eulers.x, eulers.y,
+                //    (eulers.z + RotationSpeed * Time.deltaTime) % 360f
+                //);
+
+
+
+                // Base style while pressed
+                Cursor1.DashType = Shapes.DashType.Angled;
+                Cursor1.DashSize = 5f;
+                Cursor1.DashSpacing = 2.5f;
+                Cursor1.Thickness = 2 * Mathf.PI;
+
+                Cursor1.DashOffset = Cursor1.DashOffset + RotationSpeed * Time.deltaTime;
+                Cursor1.DashOffset = Cursor1.DashOffset % 1000000;
+
+                // EXTRA: highlight when an actual is inside the radius
+                if (hasActualInside)
+                {
+                    // Example tweak: make it thicker and denser when hitting an actual
+                    Cursor1.Thickness = 4 * Mathf.PI;
+                    Cursor1.DashSize = 7f;
+                    Progress1.AngRadiansEnd = Progress1.AngRadiansEnd - Time.deltaTime * progressSpeed;
+                    Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
+
+                    Cursor1.AngRadiansStart = Cursor1.AngRadiansStart - Time.deltaTime * progressSpeed;
+                    Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
+                    // you can also modify color via Cursor1.Color if desired
+
+                    bool didComplete = Mathf.Approximately(Progress1.AngRadiansEnd, -0.5f * Mathf.PI);
+
+                    if (didComplete && hasActualInside)
+                    {
+                        OnProgressComplete();
+                    }
+                }
+                else
+                {
+                    Progress1.AngRadiansEnd = Progress1.AngRadiansEnd + Time.deltaTime * 8 * progressSpeed;
+                    Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
+
+                    Cursor1.AngRadiansStart = Cursor1.AngRadiansStart + Time.deltaTime * 8 * progressSpeed;
+                    Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
+                }
+            }
+            else
+            {
+                Cursor1.DashType = Shapes.DashType.Basic;
+                Cursor1.DashSize = 2f;
+                Cursor1.DashSpacing = 3f;
+                Cursor1.Thickness = 5f;
+
+                Cursor1.DashOffset = Cursor1.DashOffset + 0.1f * RotationSpeed * Time.deltaTime;
+                Cursor1.DashOffset = Cursor1.DashOffset % 1000000;
+
+                Progress1.AngRadiansEnd = Progress1.AngRadiansEnd + Time.deltaTime * 8 * progressSpeed;
+                Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, -1.5f * Mathf.PI, 0.5f * Mathf.PI);
+
+                Cursor1.AngRadiansStart = Cursor1.AngRadiansStart + Time.deltaTime * 8 * progressSpeed;
+                Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, -1.5f * Mathf.PI, 0.5f * Mathf.PI);
+            }
+        }
+
+        // Build and publish ClickRequest
         var req = new ClickRequest
         {
             WorldPos = worldXY,
@@ -119,14 +273,17 @@ public sealed class MeasurementClick : MonoBehaviour
             PushStrength = pushStrength,
             IsPressed = pressed,
             EdgeDown = edgeDown,
-            EdgeUp = edgeUp
+            EdgeUp = edgeUp,
+            ExclusionRadiusMultiplier = exclusionRadiusMultiplier
         };
 
-        _em.SetComponentData(_singleton, req);
+        _em.SetComponentData(_clickSingleton, req);
 
         if (logEvents && (edgeDown || edgeUp || pressed != _prevPressed))
         {
-            Debug.Log($"[Click] pressed={pressed} down={edgeDown} up={edgeUp}  world={worldXY}  R={radius} push={pushStrength}");
+            Debug.Log($"[Click] pressed={pressed} down={edgeDown} up={edgeUp} " +
+                      $"world={worldXY}  R={radius} push={pushStrength} " +
+                      $"exclMul={exclusionRadiusMultiplier} hasActualInside={hasActualInside}");
         }
 
         _prevPressed = pressed;
@@ -137,21 +294,17 @@ public sealed class MeasurementClick : MonoBehaviour
         if (cam == null) cam = Camera.main;
         if (cam == null)
         {
-            // Fallback: identity mapping if no camera
             return screen;
         }
 
         if (cam.orthographic)
         {
             Vector3 wp = cam.ScreenToWorldPoint(new Vector3(screen.x, screen.y, cam.nearClipPlane));
-            // For ortho, Z is ignored; project to XY plane at zPlane
             return new float2(wp.x, wp.y);
         }
         else
         {
-            // Perspective: ray-plane intersection with z = zPlane
             Ray r = cam.ScreenPointToRay(screen);
-            // plane normal (0,0,1), point (0,0,zPlane): solve r.origin.z + t * r.dir.z = zPlane
             float denom = r.direction.z;
             float t = (Mathf.Abs(denom) < 1e-6f) ? 0f : (zPlane - r.origin.z) / denom;
             Vector3 p = r.origin + t * r.direction;

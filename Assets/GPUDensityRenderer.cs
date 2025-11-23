@@ -21,6 +21,7 @@ public class GPUDensityRenderer : MonoBehaviour
     public int texHeight = 1024;
 
     [Header("World mapping")]
+    [ColorUsage(true, true)]
     public Color background = new Color(0.02f, 0.03f, 0.08f, 1f);
     public float exposureK = 0.01f;
     public float gamma = 0.9f;
@@ -28,6 +29,7 @@ public class GPUDensityRenderer : MonoBehaviour
     [Range(0f, 64f)] public float blurSigma = 0f;
 
     [Header("Gradient (sRGB LUT baked here)")]
+    [GradientUsage(true)]
     public Gradient srgbGradient = DefaultGradient();
 
     [Header("Debug")]

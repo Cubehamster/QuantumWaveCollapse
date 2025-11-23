@@ -56,6 +56,26 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         }
     }
 
+    static float ExposureFor(OrbitalKind2D kind)
+    {
+        switch (kind)
+        {
+            case OrbitalKind2D.OneS: return 40f;
+            case OrbitalKind2D.TwoS: return 40f;
+            case OrbitalKind2D.TwoPX: return 40f;
+            case OrbitalKind2D.TwoPY: return 40f;
+            case OrbitalKind2D.ThreeS: return 30f;
+            case OrbitalKind2D.ThreePX: return 25f;
+            case OrbitalKind2D.FourPX: return 15f;
+            case OrbitalKind2D.FourD_X2MinusY2: return 12f;
+            case OrbitalKind2D.FourD_XY: return 12f;
+            case OrbitalKind2D.FourF_Cos3Phi: return 9f;
+            case OrbitalKind2D.FourF_X_5X2_3R2: return 10f;
+            case OrbitalKind2D.FourF_Y_5Y2_3R2: return 6f;
+            default: return 40f;
+        }
+    }
+
     // runtime
     EntityManager _em;
     EntityQuery _orbQ;
