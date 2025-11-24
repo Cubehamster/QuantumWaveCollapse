@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 129be93eb9346f043943b82586d966d2
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 308858
+  packageName: Mouse Party
+  packageVersion: 1.2.0
+  assetPath: Assets/ChocDino/PartyIO/Docs/Third-Party Notices.txt
+  uploadId: 783127

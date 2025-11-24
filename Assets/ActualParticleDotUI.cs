@@ -8,65 +8,56 @@ using UnityEngine.InputSystem;
 
 /// <summary>
 /// Draws UI dots over the density RawImage for each "actual particle".
-/// - Uses multi-actual buffers on the ActualParticleSet singleton:
-///     • ActualParticlePositionElement (positions)
-///     • ActualParticleStatusElement   (statuses: Unknown / Good / Bad)
-/// - Falls back to legacy ActualParticlePosition singleton (single dot).
-/// - Press 'C' (New Input System) to toggle visibility.
-/// - Positions are mapped from world coords via SimBounds2D to overlayRect space.
-/// - While scanning and an actual is "hit", that dot is highlighted.
+/// Supports two players:
+/// - Player 1 = ClickRequest + MeasurementResult
+/// - Player 2 = ClickRequestP2 + MeasurementResultP2
+///
+/// Each player can highlight the closest actual independently.
+/// Permanently marked Good/Bad particles retain their color.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class ActualParticleDotUI : MonoBehaviour
 {
     [Header("Where to draw (same rect as your density RawImage)")]
-    [Tooltip("RectTransform area where dots should be placed (usually the RawImage RectTransform).")]
     public RectTransform overlayRect;
 
     [Header("Dot look")]
     [Min(1f)] public float dotDiameter = 10f;
 
     [Header("Status colors")]
-    [Tooltip("Color for actuals with Unknown status.")]
-    [ColorUsage (true, true)]
     public Color unknownColor = new Color(1f, 0.8f, 0.2f, 0.95f);
-    [Tooltip("Color for 'Good' actuals.")]
-    [ColorUsage(true, true)]
     public Color goodColor = new Color(0.2f, 1f, 0.2f, 0.95f);
-    [Tooltip("Color for 'Bad' actuals.")]
-    [ColorUsage(true, true)]
     public Color badColor = new Color(1f, 0.1f, 0.1f, 0.95f);
 
-    [Header("Highlight")]
-    [Tooltip("Color used while scanning over the closest actual inside the measurement radius.")]
-    [ColorUsage(true, true)]
+    [Header("Highlight (applies to P1 and P2)")]
     public Color highlightColor = new Color(1f, 1f, 1f, 1f);
-    [Tooltip("Multiply radius while highlighted (for a slightly bigger dot).")]
     public float highlightSizeMultiplier = 1.4f;
 
     [Header("Behavior")]
-    [Tooltip("Toggle visibility at start.")]
     public bool visible = true;
-    [Tooltip("Max number of dots to show (safeguard). 0 = unlimited.")]
     public int maxDots = 0;
 
     // ECS
     EntityManager _em;
     EntityQuery _boundsQ;
-    EntityQuery _cfgQ;      // multi-actual config entity: ActualParticleSet + buffers
-    EntityQuery _legacyQ;   // legacy single: ActualParticlePosition
-    EntityQuery _clickQ;    // ClickRequest singleton
-    EntityQuery _resultQ;   // MeasurementResult singleton
+    EntityQuery _cfgQ;
+    EntityQuery _legacyQ;
 
-    // Pool of UI objects (children under overlayRect)
-    readonly List<RectTransform> _dotRects = new List<RectTransform>();
-    readonly List<Shapes.Disc> _dotDiscs = new List<Shapes.Disc>();
+    EntityQuery _clickP1Q;
+    EntityQuery _clickP2Q;
+
+    EntityQuery _resultP1Q;
+    EntityQuery _resultP2Q;
+
+    // Dot pool
+    readonly List<RectTransform> _dotRects = new();
+    readonly List<Shapes.Disc> _dotDiscs = new();
 
     void OnEnable()
     {
         if (overlayRect == null)
         {
-            Debug.LogError("[ActualParticleDotUI] Assign 'overlayRect' (the RectTransform you want to draw onto). Disabling.");
+            Debug.LogError("Assign overlayRect.");
             enabled = false;
             return;
         }
@@ -74,7 +65,6 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         var world = World.DefaultGameObjectInjectionWorld;
         if (world == null)
         {
-            Debug.LogError("[ActualParticleDotUI] No Default World. Disabling.");
             enabled = false;
             return;
         }
@@ -91,20 +81,20 @@ public sealed class ActualParticleDotUI : MonoBehaviour
 
         _legacyQ = _em.CreateEntityQuery(ComponentType.ReadOnly<ActualParticlePosition>());
 
-        _clickQ = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequest>());
-        _resultQ = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResult>());
+        // NEW — player 1 and 2 input and result
+        _clickP1Q = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequest>());
+        _clickP2Q = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequestP2>());
+        _resultP1Q = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResult>());
+        _resultP2Q = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResultP2>());
 
         ApplyVisibility();
     }
 
-    void OnDisable()
-    {
-        ClearPool();
-    }
+    void OnDisable() => ClearPool();
 
     void Update()
     {
-        // Toggle with 'C' (New Input System)
+        // Toggle with "C"
         if (Keyboard.current != null && Keyboard.current.cKey.wasPressedThisFrame)
         {
             visible = !visible;
@@ -112,39 +102,47 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         }
 
         if (!visible) return;
+        if (_boundsQ.IsEmptyIgnoreFilter) return;
 
-        if (_boundsQ.IsEmptyIgnoreFilter) return; // need bounds for mapping
         var bounds = _boundsQ.GetSingleton<SimBounds2D>();
         float2 minB = bounds.Center - bounds.Extents;
-        float2 sizeB = math.max(new float2(1e-6f, 1e-6f), bounds.Extents * 2f);
+        float2 sizeB = math.max(new float2(1e-6f), bounds.Extents * 2f);
 
-        // --------------------------------------------------------------------
-        // Read scanning + highlight info from ECS:
-        //   - ClickRequest.IsPressed → scanning
-        //   - MeasurementResult.HasActualInRadius + ClosestActualIndex → which actual is "hit"
-        // --------------------------------------------------------------------
-        bool scanning = false;
-        int highlightIndex = -1;
+        // ----------------------------------------------------------
+        // 1) Read scanning states from BOTH players
+        // ----------------------------------------------------------
+        bool scanningP1 = false;
+        bool scanningP2 = false;
+        int highlightIndexP1 = -1;
+        int highlightIndexP2 = -1;
 
-        if (!_clickQ.IsEmptyIgnoreFilter)
+        if (!_clickP1Q.IsEmptyIgnoreFilter)
         {
-            var click = _clickQ.GetSingleton<ClickRequest>();
-            scanning = click.IsPressed;
+            var c1 = _clickP1Q.GetSingleton<ClickRequest>();
+            scanningP1 = c1.IsPressed;
+        }
+        if (!_resultP1Q.IsEmptyIgnoreFilter)
+        {
+            var r1 = _resultP1Q.GetSingleton<MeasurementResult>();
+            if (r1.HasActualInRadius && scanningP1)
+                highlightIndexP1 = r1.ClosestActualIndex;
         }
 
-        if (!_resultQ.IsEmptyIgnoreFilter)
+        if (!_clickP2Q.IsEmptyIgnoreFilter)
         {
-            var result = _resultQ.GetSingleton<MeasurementResult>();
-            if (result.HasActualInRadius && result.ClosestActualIndex >= 0)
-            {
-                if (scanning)
-                    highlightIndex = result.ClosestActualIndex;
-            }
+            var c2 = _clickP2Q.GetSingleton<ClickRequestP2>();
+            scanningP2 = c2.IsPressed;
+        }
+        if (!_resultP2Q.IsEmptyIgnoreFilter)
+        {
+            var r2 = _resultP2Q.GetSingleton<MeasurementResultP2>();
+            if (r2.HasActualInRadius && scanningP2)
+                highlightIndexP2 = r2.ClosestActualIndex;
         }
 
-        // --------------------------------------------------------------------
-        // Collect positions + statuses
-        // --------------------------------------------------------------------
+        // ----------------------------------------------------------
+        // 2) Collect positions and statuses
+        // ----------------------------------------------------------
         int count = 0;
         float2[] posArray = null;
         ActualParticleStatus[] statusArray = null;
@@ -164,24 +162,18 @@ public sealed class ActualParticleDotUI : MonoBehaviour
                 for (int i = 0; i < count; i++)
                     posArray[i] = posBuf[i].Value;
 
-                // Optional: statuses buffer
                 if (_em.HasBuffer<ActualParticleStatusElement>(cfgEnt))
                 {
-                    var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEnt);
-                    int statCount = math.min(statusBuf.Length, count);
+                    var statBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEnt);
                     statusArray = new ActualParticleStatus[count];
 
-                    for (int i = 0; i < statCount; i++)
-                        statusArray[i] = statusBuf[i].Value;
-
-                    for (int i = statCount; i < count; i++)
-                        statusArray[i] = ActualParticleStatus.Unknown;
+                    for (int i = 0; i < count; i++)
+                        statusArray[i] = i < statBuf.Length ? statBuf[i].Value : ActualParticleStatus.Unknown;
                 }
             }
         }
         else if (!_legacyQ.IsEmptyIgnoreFilter)
         {
-            // Legacy single position only
             var ap = _legacyQ.GetSingleton<ActualParticlePosition>();
             count = 1;
             posArray = new[] { ap.Value };
@@ -189,62 +181,62 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         }
         else
         {
-            // Nothing to draw
             SetPoolSize(0);
             return;
         }
 
+        // ----------------------------------------------------------
+        // 3) Draw dots
+        // ----------------------------------------------------------
         SetPoolSize(count);
         Vector2 canvasSize = overlayRect.rect.size;
 
         for (int i = 0; i < count; i++)
         {
             float2 p = posArray[i];
-            float2 uv = (p - minB) / sizeB;          // 0..1
+            float2 uv = (p - minB) / sizeB;
             Vector2 anchor = new Vector2(uv.x * canvasSize.x, uv.y * canvasSize.y);
 
             var rt = _dotRects[i];
             var disc = _dotDiscs[i];
-            if (rt == null || disc == null) continue;
 
             rt.anchoredPosition = anchor;
 
-            // Base color from status
-            Color baseColor = unknownColor;
-            if (statusArray != null && i < statusArray.Length)
+            // permanent color
+            Color baseColor = statusArray[i] switch
             {
-                switch (statusArray[i])
-                {
-                    case ActualParticleStatus.Good: baseColor = goodColor; break;
-                    case ActualParticleStatus.Bad: baseColor = badColor; break;
-                    case ActualParticleStatus.Unknown:
-                    default: baseColor = unknownColor; break;
-                }
-            }
+                ActualParticleStatus.Good => goodColor,
+                ActualParticleStatus.Bad => badColor,
+                _ => unknownColor
+            };
 
-            // Highlight override while scanning the closest actual
-            bool isHighlighted = (i == highlightIndex && scanning);
-            Color finalColor = isHighlighted ? highlightColor : baseColor;
-            float radiusMul = isHighlighted ? highlightSizeMultiplier : 1f;
+            // highlight conditions (either P1 or P2)
+            bool highlightFromP1 = (i == highlightIndexP1 && scanningP1);
+            bool highlightFromP2 = (i == highlightIndexP2 && scanningP2);
+
+            bool finalHighlight = highlightFromP1 || highlightFromP2;
+
+            Color finalColor = finalHighlight ? highlightColor : baseColor;
+            float radiusMul = finalHighlight ? highlightSizeMultiplier : 1f;
 
             disc.Color = finalColor;
             disc.Radius = 0.5f * dotDiameter * radiusMul;
         }
     }
 
-    // ----------------- Pool management -----------------
+    // ----------------- Helpers -----------------
 
     void ApplyVisibility()
     {
-        if (overlayRect == null) return;
-        overlayRect.gameObject.SetActive(visible);
+        if (overlayRect != null)
+            overlayRect.gameObject.SetActive(visible);
     }
 
     void ClearPool()
     {
-        for (int i = 0; i < _dotRects.Count; i++)
-            if (_dotRects[i] != null)
-                Destroy(_dotRects[i].gameObject);
+        foreach (var rt in _dotRects)
+            if (rt != null)
+                Destroy(rt.gameObject);
 
         _dotRects.Clear();
         _dotDiscs.Clear();
@@ -252,29 +244,27 @@ public sealed class ActualParticleDotUI : MonoBehaviour
 
     void SetPoolSize(int needed)
     {
-        if (needed < 0) needed = 0;
-
         while (_dotRects.Count < needed)
             CreateDot();
 
         for (int i = 0; i < _dotRects.Count; i++)
         {
             bool active = i < needed;
-            if (_dotRects[i] != null && _dotRects[i].gameObject.activeSelf != active)
+            if (_dotRects[i].gameObject.activeSelf != active)
                 _dotRects[i].gameObject.SetActive(active);
         }
     }
 
     void CreateDot()
     {
-        // Parent: handles positioning in overlayRect space
-        GameObject parentGO = new GameObject("QuantumParticle", typeof(RectTransform));
+        GameObject parentGO = new GameObject("ActualDotParent", typeof(RectTransform));
         parentGO.transform.SetParent(overlayRect, false);
+        parentGO.transform.position = new Vector3(parentGO.transform.position.x, parentGO.transform.position.y, -1);
+
         var parentRT = parentGO.GetComponent<RectTransform>();
         parentRT.anchorMin = Vector2.zero;
         parentRT.anchorMax = Vector2.zero;
 
-        // Child: the actual disc with Boing behavior
         GameObject discGO = new GameObject("ActualDot",
             typeof(CanvasRenderer),
             typeof(RectTransform),
@@ -282,11 +272,6 @@ public sealed class ActualParticleDotUI : MonoBehaviour
             typeof(BoingBehavior));
 
         discGO.transform.SetParent(parentGO.transform, false);
-
-        var discRT = discGO.GetComponent<RectTransform>();
-        discRT.position = new Vector3(discRT.position.x, discRT.position.y, -1f);
-        discRT.pivot = new Vector2(0.5f, 0.5f);
-        discRT.sizeDelta = new Vector2(dotDiameter, dotDiameter);
 
         var disc = discGO.GetComponent<Shapes.Disc>();
         disc.Radius = dotDiameter * 0.5f;

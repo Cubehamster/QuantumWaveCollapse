@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 754907186af623241a5cbca5ee0f73b9
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 308858
+  packageName: Mouse Party
+  packageVersion: 1.2.0
+  assetPath: Assets/ChocDino/PartyIO/Runtime/Scripts/MouseDeviceManager.cs
+  uploadId: 783127

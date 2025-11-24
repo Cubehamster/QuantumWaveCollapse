@@ -5,33 +5,33 @@ using Unity.Mathematics;
 using UnityEngine;
 
 /// <summary>
-/// Measurement interaction:
-/// • Uses ClickRequest (from MeasurementClick) to apply forces to walkers.
-/// • While pressed: suction (inward force).
-/// • On release: outward pulse.
-/// • Also finds the *closest* actual particle inside the measurement radius
-///   every frame and writes it to MeasurementResult.
-/// • Good/Bad status is NOT used here; highlight selection is purely geometric.
+/// Measurement interaction (two players):
+/// • P1: ClickRequest + MeasurementResult
+/// • P2: ClickRequestP2 + MeasurementResultP2
+///
+/// For each player:
+///   - Finds closest actual particle within a highlight radius.
+///   - Applies radial force to walkers:
+///       * R_outer = req.Radius, StrengthOuter = req.PushStrength
+///       * R_inner = req.InnerRadius, StrengthInner = req.InnerPushStrength
+///     Inside R_inner: uses StrengthInner (e.g. small negative pull).
+///     Between R_inner and R_outer: uses StrengthOuter.
+///   - Only the closest actual can be pulled; other actuals are always pushed.
+///   - Zeroes Force on that player's "protected" actual walker if desired.
 /// </summary>
 [WorldSystemFilter(WorldSystemFilterFlags.Default)]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [UpdateAfter(typeof(LangevinWalkSystem))]
-
-public struct MeasurementResult : IComponentData
-{
-    public float2 Center;            // world position of current measurement center
-    public bool HasActualInRadius;   // true if at least one "actual" walker inside exclusion radius this frame
-    public float ProbabilityLast;    // fraction of walkers inside last released radius
-    public int ClosestActualIndex;  // -1 = none
-    public float2 ClosestActualPos;
-}
-
 public partial struct MeasurementSystem : ISystem
 {
     EntityQuery _walkersQ;
-    EntityQuery _reqQ;
     EntityQuery _cfgQ;
-    EntityQuery _resultQ;
+
+    EntityQuery _reqP1Q;
+    EntityQuery _reqP2Q;
+
+    EntityQuery _resP1Q;
+    EntityQuery _resP2Q;
 
     public void OnCreate(ref SystemState state)
     {
@@ -42,22 +42,35 @@ public partial struct MeasurementSystem : ISystem
             ComponentType.ReadOnly<Position>(),
             ComponentType.ReadWrite<Force>());
 
-        _reqQ = state.GetEntityQuery(ComponentType.ReadOnly<ClickRequest>());
-
-        // Config that holds actual particles + positions
         _cfgQ = state.GetEntityQuery(
             ComponentType.ReadOnly<ActualParticleSet>(),
             ComponentType.ReadOnly<ActualParticleRef>(),
             ComponentType.ReadOnly<ActualParticlePositionElement>());
 
-        _resultQ = state.GetEntityQuery(ComponentType.ReadWrite<MeasurementResult>());
+        _reqP1Q = state.GetEntityQuery(ComponentType.ReadOnly<ClickRequest>());
+        _reqP2Q = state.GetEntityQuery(ComponentType.ReadOnly<ClickRequestP2>());
 
-        // Ensure MeasurementResult singleton exists
-        if (_resultQ.CalculateEntityCount() == 0)
+        _resP1Q = state.GetEntityQuery(ComponentType.ReadWrite<MeasurementResult>());
+        _resP2Q = state.GetEntityQuery(ComponentType.ReadWrite<MeasurementResultP2>());
+
+        // Ensure MeasurementResult singletons exist
+        if (_resP1Q.CalculateEntityCount() == 0)
         {
-            var e = em.CreateEntity(typeof(MeasurementResult));
-            em.SetName(e, "MeasurementResultSingleton");
-            em.SetComponentData(e, new MeasurementResult
+            var e1 = em.CreateEntity(typeof(MeasurementResult));
+            em.SetName(e1, "MeasurementResult_P1");
+            em.SetComponentData(e1, new MeasurementResult
+            {
+                HasActualInRadius = false,
+                ClosestActualIndex = -1,
+                ClosestActualPos = float2.zero
+            });
+        }
+
+        if (_resP2Q.CalculateEntityCount() == 0)
+        {
+            var e2 = em.CreateEntity(typeof(MeasurementResultP2));
+            em.SetName(e2, "MeasurementResult_P2");
+            em.SetComponentData(e2, new MeasurementResultP2
             {
                 HasActualInRadius = false,
                 ClosestActualIndex = -1,
@@ -70,62 +83,113 @@ public partial struct MeasurementSystem : ISystem
     {
         var em = state.EntityManager;
 
-        if (_resultQ.IsEmptyIgnoreFilter)
-            return;
-
-        var resultEnt = _resultQ.GetSingletonEntity();
-        var result = em.GetComponentData<MeasurementResult>(resultEnt);
-
-        // No click input? Clear highlight & bail.
-        if (_reqQ.IsEmptyIgnoreFilter)
-        {
-            result.HasActualInRadius = false;
-            result.ClosestActualIndex = -1;
-            em.SetComponentData(resultEnt, result);
-            return;
-        }
-
-        var req = _reqQ.GetSingleton<ClickRequest>();
-
         int N = _walkersQ.CalculateEntityCount();
-        if (N == 0)
+        bool haveCfg = !_cfgQ.IsEmptyIgnoreFilter;
+
+        // Early out: no walkers at all or no config
+        if (N == 0 || !haveCfg)
         {
-            result.HasActualInRadius = false;
-            result.ClosestActualIndex = -1;
-            em.SetComponentData(resultEnt, result);
+            ClearResultIfPresent<MeasurementResult>(ref state, _resP1Q);
+            ClearResultIfPresent<MeasurementResultP2>(ref state, _resP2Q);
             return;
         }
+
+        // We have at least one cfg entity
+        using var cfgEnts = _cfgQ.ToEntityArray(Allocator.Temp);
+        var cfgEnt = cfgEnts[0];
+
+        var posBuf = em.GetBuffer<ActualParticlePositionElement>(cfgEnt);
+        var refBuf = em.GetBuffer<ActualParticleRef>(cfgEnt);
+
+        // Process Player 1
+        if (!_resP1Q.IsEmptyIgnoreFilter)
+        {
+            var resultEnt1 = _resP1Q.GetSingletonEntity();
+            var result1 = em.GetComponentData<MeasurementResult>(resultEnt1);
+
+            if (_reqP1Q.IsEmptyIgnoreFilter)
+            {
+                result1.HasActualInRadius = false;
+                result1.ClosestActualIndex = -1;
+                em.SetComponentData(resultEnt1, result1);
+            }
+            else
+            {
+                var req1 = _reqP1Q.GetSingleton<ClickRequest>();
+                ProcessPlayer(
+                    ref state,
+                    ref result1,
+                    resultEnt1,
+                    req1,
+                    N,
+                    posBuf,
+                    refBuf,
+                    isP2: false);
+            }
+        }
+
+        // Process Player 2
+        if (!_resP2Q.IsEmptyIgnoreFilter)
+        {
+            var resultEnt2 = _resP2Q.GetSingletonEntity();
+            var result2 = em.GetComponentData<MeasurementResultP2>(resultEnt2);
+
+            if (_reqP2Q.IsEmptyIgnoreFilter)
+            {
+                result2.HasActualInRadius = false;
+                result2.ClosestActualIndex = -1;
+                em.SetComponentData(resultEnt2, result2);
+            }
+            else
+            {
+                var req2 = _reqP2Q.GetSingleton<ClickRequestP2>();
+                ProcessPlayer(
+                    ref state,
+                    ref result2,
+                    resultEnt2,
+                    req2,
+                    N,
+                    posBuf,
+                    refBuf,
+                    isP2: true);
+            }
+        }
+    }
+
+    // ---------------- Player 1 version ----------------
+    void ProcessPlayer(
+        ref SystemState state,
+        ref MeasurementResult result,
+        Entity resultEnt,
+        ClickRequest req,
+        int N,
+        DynamicBuffer<ActualParticlePositionElement> posBuf,
+        DynamicBuffer<ActualParticleRef> refBuf,
+        bool isP2)
+    {
+        var em = state.EntityManager;
 
         float2 c = req.WorldPos;
         float R = math.max(1e-6f, req.Radius);
         float R2 = R * R;
 
-        //---------------------------------------------------------------
-        // Highlight radius = R * exclusionMultiplier
-        //---------------------------------------------------------------
+        // ---------------- Highlight radius (for selecting closest actual) ----------------
         float exclMul = math.max(0f, req.ExclusionRadiusMultiplier);
-        float highlightR = R * exclMul;
+        float highlightR = (exclMul > 0f) ? R * exclMul : R;
         float highlightR2 = highlightR * highlightR;
 
         int closestIdx = -1;
         float closestD2 = float.MaxValue;
         float2 closestPos = float2.zero;
 
-        // If multiplier = 0 → highlightR = 0 → skip highlight entirely
-        if (highlightR > 0f && !_cfgQ.IsEmptyIgnoreFilter)
+        if (highlightR > 0f && posBuf.Length > 0)
         {
-            using var cfgEnts = _cfgQ.ToEntityArray(Allocator.Temp);
-            var cfgEnt = cfgEnts[0];
-
-            var posBuf = em.GetBuffer<ActualParticlePositionElement>(cfgEnt);
-
             for (int i = 0; i < posBuf.Length; i++)
             {
                 float2 p = posBuf[i].Value;
                 float2 d = p - c;
                 float d2 = math.lengthsq(d);
 
-                // Only highlight if inside highlight radius
                 if (d2 <= highlightR2 && d2 < closestD2)
                 {
                     closestD2 = d2;
@@ -135,132 +199,321 @@ public partial struct MeasurementSystem : ISystem
             }
         }
 
+        result.Center = c;
         result.HasActualInRadius = (closestIdx >= 0);
         result.ClosestActualIndex = closestIdx;
         result.ClosestActualPos = closestPos;
         em.SetComponentData(resultEnt, result);
-        // ------------------------------------------------------------------
-        // 2) Apply forces to walkers (same shape as your old system).
-        // ------------------------------------------------------------------
 
-        float R2Push = R2;
+        // ---------------- Inner region force parameters ----------------
+        float innerR = math.max(0f, req.InnerRadius);
+        float innerR2 = innerR * innerR;
+        float strengthOuter = req.PushStrength;
+        float strengthInner = req.InnerPushStrength;
 
-        // While pressed -> suction (inward)
-        if (req.IsPressed && req.PushStrength != 0f)
+        // Convert actual refs buffer to NativeArray<Entity> for the job
+        NativeArray<Entity> actualRefs = refBuf.Reinterpret<Entity>().AsNativeArray();
+
+        // Which walker is the closest actual for this player?
+        Entity closestActualEntity = Entity.Null;
+        bool hasClosestActual = false;
+        if (result.HasActualInRadius &&
+            result.ClosestActualIndex >= 0 &&
+            result.ClosestActualIndex < refBuf.Length)
+        {
+            closestActualEntity = refBuf[result.ClosestActualIndex].Walker;
+            hasClosestActual = true;
+        }
+
+        // ---------------- While pressed: suction/blow (two-zone) ----------------
+        if (req.IsPressed && strengthOuter != 0f)
         {
             var job = new PushJob
             {
                 Center = c,
-                R2 = R2Push,
-                Strength = math.abs(req.PushStrength), // inward; flip sign in job if you want outward
-                EdgeSoft = 1.0f
+                OuterR2 = R2,
+                InnerR2 = innerR2,
+                StrengthOuter = strengthOuter,
+                StrengthInner = strengthInner,
+                EdgeSoft = 1.0f,
+                ClosestActualEntity = closestActualEntity,
+                HasClosestActual = hasClosestActual,
+                ActualRefs = actualRefs
             };
             state.Dependency = job.ScheduleParallel(state.Dependency);
         }
 
-        // On release -> outward pulse
+        // ---------------- On release: outward pulse, also compute probability ----------------
         if (req.EdgeUp)
         {
             var push = new PushJob
             {
                 Center = c,
-                R2 = R2Push,
-                Strength = math.abs(req.PushStrength), // outward (same magnitude)
-                EdgeSoft = 1.0f
+                OuterR2 = R2,
+                InnerR2 = innerR2,
+                StrengthOuter = math.abs(strengthOuter),   // you can tune sign if desired
+                StrengthInner = strengthInner,
+                EdgeSoft = 1.0f,
+                ClosestActualEntity = closestActualEntity,
+                HasClosestActual = hasClosestActual,
+                ActualRefs = actualRefs
             };
             state.Dependency = push.ScheduleParallel(state.Dependency);
             state.Dependency.Complete();
 
-            // Count how many walkers ended inside radius (for debug p≈...)
             var insideCount = new NativeArray<int>(1, Allocator.TempJob, NativeArrayOptions.ClearMemory);
-            var count = new CountInsideJob
+            var countJob = new CountInsideJob
             {
                 Center = c,
-                R2 = R2Push,
+                R2 = R2,
                 Counter = insideCount
             };
-            state.Dependency = count.ScheduleParallel(state.Dependency);
+            state.Dependency = countJob.ScheduleParallel(state.Dependency);
             state.Dependency.Complete();
 
             int inside = insideCount[0];
             insideCount.Dispose();
 
             float p = (float)inside / math.max(1, N);
-            Debug.Log($"[Measure] p≈{Round3(p)} @ {c}");
+            result.ProbabilityLast = p;
+            em.SetComponentData(resultEnt, result);
+
+            Debug.Log($"[Measure {(isP2 ? "P2" : "P1")}] p≈{Round3(p)} @ {c}");
         }
 
-        // ------------------------------------------------------------------
-        // 3) (Optional) Protect the closest actual from this frame's push:
-        //    We simply zero its Force so the measurement push doesn't move it.
-        //    This matches the behaviour "one actual is not influenced by push".
-        // ------------------------------------------------------------------
-        if (result.HasActualInRadius &&
-            result.ClosestActualIndex >= 0 &&
-            !_cfgQ.IsEmptyIgnoreFilter)
+        //// ---------------- Optional: zero this player's closest actual force ----------------
+        //if (hasClosestActual)
+        //{
+        //    var zeroJob = new ZeroForceActualJob
+        //    {
+        //        ActualEntity = closestActualEntity
+        //    };
+        //    state.Dependency = zeroJob.ScheduleParallel(state.Dependency);
+        //}
+    }
+
+    // ---------------- Player 2 version ----------------
+    void ProcessPlayer(
+        ref SystemState state,
+        ref MeasurementResultP2 result,
+        Entity resultEnt,
+        ClickRequestP2 req,
+        int N,
+        DynamicBuffer<ActualParticlePositionElement> posBuf,
+        DynamicBuffer<ActualParticleRef> refBuf,
+        bool isP2)
+    {
+        var em = state.EntityManager;
+
+        float2 c = req.WorldPos;
+        float R = math.max(1e-6f, req.Radius);
+        float R2 = R * R;
+
+        float exclMul = math.max(0f, req.ExclusionRadiusMultiplier);
+        float highlightR = (exclMul > 0f) ? R * exclMul : R;
+        float highlightR2 = highlightR * highlightR;
+
+        int closestIdx = -1;
+        float closestD2 = float.MaxValue;
+        float2 closestPos = float2.zero;
+
+        if (highlightR > 0f && posBuf.Length > 0)
         {
-            using var cfgEnts2 = _cfgQ.ToEntityArray(Allocator.Temp);
-            var cfgEnt2 = cfgEnts2[0];
-            var refBuf = em.GetBuffer<ActualParticleRef>(cfgEnt2);
-
-            int idx = result.ClosestActualIndex;
-            if (idx >= 0 && idx < refBuf.Length)
+            for (int i = 0; i < posBuf.Length; i++)
             {
-                Entity protectedWalker = refBuf[idx].Walker;
+                float2 p = posBuf[i].Value;
+                float2 d = p - c;
+                float d2 = math.lengthsq(d);
 
-                var zeroJob = new ZeroForceActualJob
+                if (d2 <= highlightR2 && d2 < closestD2)
                 {
-                    ActualEntity = protectedWalker
-                };
-                state.Dependency = zeroJob.ScheduleParallel(state.Dependency);
+                    closestD2 = d2;
+                    closestIdx = i;
+                    closestPos = p;
+                }
             }
         }
 
-        // (Optional: you still have your commented-out CollapseJob if you want
-        //  that visual after a successful measurement.)
+        result.Center = c;
+        result.HasActualInRadius = (closestIdx >= 0);
+        result.ClosestActualIndex = closestIdx;
+        result.ClosestActualPos = closestPos;
+        em.SetComponentData(resultEnt, result);
+
+        float innerR = math.max(0f, req.InnerRadius);
+        float innerR2 = innerR * innerR;
+        float strengthOuter = req.PushStrength;
+        float strengthInner = req.InnerPushStrength;
+
+        NativeArray<Entity> actualRefs = refBuf.Reinterpret<Entity>().AsNativeArray();
+
+        Entity closestActualEntity = Entity.Null;
+        bool hasClosestActual = false;
+        if (result.HasActualInRadius &&
+            result.ClosestActualIndex >= 0 &&
+            result.ClosestActualIndex < refBuf.Length)
+        {
+            closestActualEntity = refBuf[result.ClosestActualIndex].Walker;
+            hasClosestActual = true;
+        }
+
+        if (req.IsPressed && strengthOuter != 0f)
+        {
+            var job = new PushJob
+            {
+                Center = c,
+                OuterR2 = R2,
+                InnerR2 = innerR2,
+                StrengthOuter = strengthOuter,
+                StrengthInner = strengthInner,
+                EdgeSoft = 1.0f,
+                ClosestActualEntity = closestActualEntity,
+                HasClosestActual = hasClosestActual,
+                ActualRefs = actualRefs
+            };
+            state.Dependency = job.ScheduleParallel(state.Dependency);
+        }
+
+        if (req.EdgeUp)
+        {
+            var push = new PushJob
+            {
+                Center = c,
+                OuterR2 = R2,
+                InnerR2 = innerR2,
+                StrengthOuter = math.abs(strengthOuter),
+                StrengthInner = strengthInner,
+                EdgeSoft = 1.0f,
+                ClosestActualEntity = closestActualEntity,
+                HasClosestActual = hasClosestActual,
+                ActualRefs = actualRefs
+            };
+            state.Dependency = push.ScheduleParallel(state.Dependency);
+            state.Dependency.Complete();
+
+            var insideCount = new NativeArray<int>(1, Allocator.TempJob, NativeArrayOptions.ClearMemory);
+            var countJob = new CountInsideJob
+            {
+                Center = c,
+                R2 = R2,
+                Counter = insideCount
+            };
+            state.Dependency = countJob.ScheduleParallel(state.Dependency);
+            state.Dependency.Complete();
+
+            int inside = insideCount[0];
+            insideCount.Dispose();
+
+            float p = (float)inside / math.max(1, N);
+            result.ProbabilityLast = p;
+            em.SetComponentData(resultEnt, result);
+
+            Debug.Log($"[Measure {(isP2 ? "P2" : "P1")}] p≈{Round3(p)} @ {c}");
+        }
+
+        //if (hasClosestActual)
+        //{
+        //    var zeroJob = new ZeroForceActualJob
+        //    {
+        //        ActualEntity = closestActualEntity
+        //    };
+        //    state.Dependency = zeroJob.ScheduleParallel(state.Dependency);
+        //}
     }
 
     static float Round3(float v) => math.round(v * 1000f) * 0.001f;
+
+    void ClearResultIfPresent<T>(ref SystemState state, EntityQuery q) where T : unmanaged, IComponentData
+    {
+        var em = state.EntityManager;
+        if (!q.IsEmptyIgnoreFilter)
+        {
+            var e = q.GetSingletonEntity();
+            var r = em.GetComponentData<T>(e);
+            // Currently a no-op; you can zero fields here if needed.
+        }
+    }
 
     // ----------------------------------------------------------------------
     // JOBS
     // ----------------------------------------------------------------------
 
     /// <summary>
-    /// Adds a radial force within a circle. Positive or negative Strength is
-    /// interpreted by you (e.g. use sign inside Execute if you want suction vs blow).
+    /// Two-zone radial push job:
+    /// - OuterR2: full measurement radius^2, StrengthOuter used outside inner region.
+    /// - InnerR2: inner radius^2, StrengthInner used inside (if > 0).
+    /// - Only ClosestActualEntity is allowed to feel inner pull; other actuals are always pushed.
     /// </summary>
     [BurstCompile]
     [WithAll(typeof(ParticleTag))]
     public partial struct PushJob : IJobEntity
     {
         public float2 Center;
-        public float R2;        // radius^2
-        public float Strength;  // magnitude (sign is up to your convention)
-        public float EdgeSoft;  // softness exponent for falloff
+        public float OuterR2;
+        public float InnerR2;      // 0 → no inner region
+        public float StrengthOuter;
+        public float StrengthInner;
+        public float EdgeSoft;     // currently unused, kept for curve tuning if needed
 
-        public void Execute(ref Force f, in Position pos)
+        public Entity ClosestActualEntity;
+        public bool HasClosestActual;
+
+        [ReadOnly]
+        public NativeArray<Entity> ActualRefs;
+
+        public void Execute(Entity entity, ref Force f, in Position pos)
         {
             float2 d = pos.Value - Center;
             float d2 = math.lengthsq(d);
-            if (d2 > R2)
+            if (d2 > OuterR2)
                 return;
 
             float r = math.sqrt(math.max(1e-12f, d2));
             float2 dir = d / r;
 
-            // Smooth falloff t in [0..1]
-            float t = 1f - (r / math.sqrt(R2));
+            float t = 1f - (r / math.sqrt(OuterR2));
             t = math.saturate(t);
-            float shaped = t * t; // quadratic
+            float shaped = t * t;
 
-            float2 forceVec = dir * (Strength * shaped);
-            f.Value += forceVec;
+            // Is this entity one of the actuals?
+            bool isActual = false;
+            for (int i = 0; i < ActualRefs.Length; i++)
+            {
+                if (entity == ActualRefs[i])
+                {
+                    isActual = true;
+                    break;
+                }
+            }
+
+            float strength;
+
+            if (HasClosestActual && entity == ClosestActualEntity)
+            {
+                // Closest actual: can get inner pull
+                if (InnerR2 > 0f && d2 <= InnerR2)
+                    strength = StrengthInner;  // e.g. negative pull
+                else
+                    strength = StrengthOuter;
+            }
+            else if (isActual)
+            {
+                // Other actuals: *never* pulled, always pushed
+                strength = StrengthOuter;
+            }
+            else
+            {
+                // Normal walkers: inner pull if inside inner radius, otherwise push
+                if (InnerR2 > 0f && d2 <= InnerR2)
+                    strength = StrengthInner;
+                else
+                    strength = StrengthOuter;
+            }
+
+            f.Value += dir * (strength * shaped);
         }
     }
 
-    /// <summary>
-    /// Counts walkers inside the radius (approx; benign race on a single int).
-    /// </summary>
     [BurstCompile]
     [WithAll(typeof(ParticleTag))]
     public partial struct CountInsideJob : IJobEntity
@@ -280,10 +533,6 @@ public partial struct MeasurementSystem : ISystem
         }
     }
 
-    /// <summary>
-    /// Zeroes Force on the chosen "protected" actual walker so that the measurement
-    /// push does not affect it this frame.
-    /// </summary>
     [BurstCompile]
     [WithAll(typeof(ParticleTag))]
     public partial struct ZeroForceActualJob : IJobEntity

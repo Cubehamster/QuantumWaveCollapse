@@ -1,0 +1,20 @@
+{
+    "name": "ChocDino.PartyIO",
+    "rootNamespace": "",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "PACKAGE_UITOOLKIT"
+        }
+    ],
+    "noEngineReferences": false
+}

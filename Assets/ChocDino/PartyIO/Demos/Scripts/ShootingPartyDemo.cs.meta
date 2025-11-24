@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 6470b7142c37ea2488eefc376a0cfb29
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 308858
+  packageName: Mouse Party
+  packageVersion: 1.2.0
+  assetPath: Assets/ChocDino/PartyIO/Demos/Scripts/ShootingPartyDemo.cs
+  uploadId: 783127

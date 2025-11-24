@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: ff124ac2ff8cb2741ab25f2a8633db6b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 308858
+  packageName: Mouse Party
+  packageVersion: 1.2.0
+  assetPath: Assets/ChocDino/PartyIO/Demos/Scripts/LowLevelDemo.cs
+  uploadId: 783127

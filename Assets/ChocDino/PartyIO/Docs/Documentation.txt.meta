@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: a29d271dd7cba9240bf0d1d687176c71
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 308858
+  packageName: Mouse Party
+  packageVersion: 1.2.0
+  assetPath: Assets/ChocDino/PartyIO/Docs/Documentation.txt
+  uploadId: 783127

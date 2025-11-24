@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: be240417e4f55dc4c8af962296de03c2
+AssemblyDefinitionImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 308858
+  packageName: Mouse Party
+  packageVersion: 1.2.0
+  assetPath: Assets/ChocDino/PartyIO/Demos/ChocDino.PartyIO.Demos.asmdef
+  uploadId: 783127
