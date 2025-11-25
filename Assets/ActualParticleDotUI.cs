@@ -7,13 +7,18 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// Draws UI dots over the density RawImage for each "actual particle".
+/// Draws UI dots over the density RawImage for each *active* "actual particle".
 /// Supports two players:
 /// - Player 1 = ClickRequest + MeasurementResult
 /// - Player 2 = ClickRequestP2 + MeasurementResultP2
 ///
 /// Each player can highlight the closest actual independently.
 /// Permanently marked Good/Bad particles retain their color.
+/// 
+/// Now pool-aware:
+/// - Uses ActualParticleRef to filter active slots (Walker != Entity.Null).
+/// - Positions taken from ActualParticlePositionElement for active slots only.
+/// - highlightIndexP1/P2 are interpreted as *slot indices* into the pool.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class ActualParticleDotUI : MonoBehaviour
@@ -81,7 +86,6 @@ public sealed class ActualParticleDotUI : MonoBehaviour
 
         _legacyQ = _em.CreateEntityQuery(ComponentType.ReadOnly<ActualParticlePosition>());
 
-        // NEW — player 1 and 2 input and result
         _clickP1Q = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequest>());
         _clickP2Q = _em.CreateEntityQuery(ComponentType.ReadOnly<ClickRequestP2>());
         _resultP1Q = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResult>());
@@ -125,7 +129,7 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         {
             var r1 = _resultP1Q.GetSingleton<MeasurementResult>();
             if (r1.HasActualInRadius && scanningP1)
-                highlightIndexP1 = r1.ClosestActualIndex;
+                highlightIndexP1 = r1.ClosestActualIndex; // slot index
         }
 
         if (!_clickP2Q.IsEmptyIgnoreFilter)
@@ -137,47 +141,78 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         {
             var r2 = _resultP2Q.GetSingleton<MeasurementResultP2>();
             if (r2.HasActualInRadius && scanningP2)
-                highlightIndexP2 = r2.ClosestActualIndex;
+                highlightIndexP2 = r2.ClosestActualIndex; // slot index
         }
 
         // ----------------------------------------------------------
-        // 2) Collect positions and statuses
+        // 2) Collect ACTIVE positions and statuses from the pool
+        //    - Active slot: ActualParticleRef[i].Walker != Entity.Null
         // ----------------------------------------------------------
-        int count = 0;
+        int activeCount = 0;
         float2[] posArray = null;
         ActualParticleStatus[] statusArray = null;
+        int[] slotIndexArray = null; // maps dot index -> pool slot index
 
         if (!_cfgQ.IsEmptyIgnoreFilter)
         {
             using var cfgEnts = _cfgQ.ToEntityArray(Allocator.Temp);
             var cfgEnt = cfgEnts[0];
 
+            var refBuf = _em.GetBuffer<ActualParticleRef>(cfgEnt);
             var posBuf = _em.GetBuffer<ActualParticlePositionElement>(cfgEnt);
-            count = posBuf.Length;
-            if (maxDots > 0) count = Mathf.Min(count, maxDots);
+            DynamicBuffer<ActualParticleStatusElement> statBuf =
+                _em.HasBuffer<ActualParticleStatusElement>(cfgEnt)
+                    ? _em.GetBuffer<ActualParticleStatusElement>(cfgEnt)
+                    : default;
 
-            if (count > 0)
+            int poolLen = math.min(refBuf.Length, posBuf.Length);
+
+            // Gather active slots
+            List<float2> posList = new();
+            List<ActualParticleStatus> statusList = new();
+            List<int> slotIndexList = new();
+
+            for (int i = 0; i < poolLen; i++)
             {
-                posArray = new float2[count];
-                for (int i = 0; i < count; i++)
-                    posArray[i] = posBuf[i].Value;
+                if (refBuf[i].Walker == Entity.Null)
+                    continue; // inactive slot, skip
 
-                if (_em.HasBuffer<ActualParticleStatusElement>(cfgEnt))
+                posList.Add(posBuf[i].Value);
+                slotIndexList.Add(i);
+
+                ActualParticleStatus st = ActualParticleStatus.Unknown;
+                if (statBuf.IsCreated && i < statBuf.Length)
+                    st = statBuf[i].Value;
+
+                statusList.Add(st);
+            }
+
+            activeCount = posList.Count;
+            if (maxDots > 0)
+                activeCount = Mathf.Min(activeCount, maxDots);
+
+            if (activeCount > 0)
+            {
+                posArray = new float2[activeCount];
+                statusArray = new ActualParticleStatus[activeCount];
+                slotIndexArray = new int[activeCount];
+
+                for (int i = 0; i < activeCount; i++)
                 {
-                    var statBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEnt);
-                    statusArray = new ActualParticleStatus[count];
-
-                    for (int i = 0; i < count; i++)
-                        statusArray[i] = i < statBuf.Length ? statBuf[i].Value : ActualParticleStatus.Unknown;
+                    posArray[i] = posList[i];
+                    statusArray[i] = statusList[i];
+                    slotIndexArray[i] = slotIndexList[i]; // pool slot index
                 }
             }
         }
         else if (!_legacyQ.IsEmptyIgnoreFilter)
         {
+            // Legacy single-actual fallback
             var ap = _legacyQ.GetSingleton<ActualParticlePosition>();
-            count = 1;
+            activeCount = 1;
             posArray = new[] { ap.Value };
             statusArray = new[] { ActualParticleStatus.Unknown };
+            slotIndexArray = new[] { 0 };
         }
         else
         {
@@ -186,12 +221,12 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         }
 
         // ----------------------------------------------------------
-        // 3) Draw dots
+        // 3) Draw dots (only for ACTIVE slots)
         // ----------------------------------------------------------
-        SetPoolSize(count);
+        SetPoolSize(activeCount);
         Vector2 canvasSize = overlayRect.rect.size;
 
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < activeCount; i++)
         {
             float2 p = posArray[i];
             float2 uv = (p - minB) / sizeB;
@@ -210,9 +245,11 @@ public sealed class ActualParticleDotUI : MonoBehaviour
                 _ => unknownColor
             };
 
-            // highlight conditions (either P1 or P2)
-            bool highlightFromP1 = (i == highlightIndexP1 && scanningP1);
-            bool highlightFromP2 = (i == highlightIndexP2 && scanningP2);
+            int slotIndex = slotIndexArray[i];
+
+            // highlight conditions (either P1 or P2), comparing against slot index
+            bool highlightFromP1 = (slotIndex == highlightIndexP1 && scanningP1);
+            bool highlightFromP2 = (slotIndex == highlightIndexP2 && scanningP2);
 
             bool finalHighlight = highlightFromP1 || highlightFromP2;
 

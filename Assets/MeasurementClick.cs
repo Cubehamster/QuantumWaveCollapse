@@ -6,6 +6,7 @@
 // Works in orthographic or perspective; assumes XY plane (z=0).
 
 using System.Linq;
+using System.Collections.Generic;
 using UnityEngine;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -26,8 +27,7 @@ public struct ClickRequest : IComponentData
     // Multiplier used by MeasurementSystem for highlight/protection logic
     public float ExclusionRadiusMultiplier;
 
-    // NEW: inner region around the click where a different force is used
-    // (0 = no inner region)
+    // Inner region where a different force is used (0 = no inner region)
     public float InnerRadius;
     public float InnerPushStrength;
 }
@@ -73,6 +73,7 @@ public enum ClickMode
     PressOnceToPush
 }
 
+
 // ---------------- MonoBehaviour ----------------
 
 [DisallowMultipleComponent]
@@ -91,20 +92,14 @@ public sealed class MeasurementClick : MonoBehaviour
     [Min(0f)] public float radius = 0.25f;
     public float pushStrength = 25f;
 
-    [Tooltip("Actual particles inside R * ExclusionRadiusMultiplier are protected from push.")]
+    [Tooltip("Actual particles inside R * ExclusionRadiusMultiplier are protected / highlighted.")]
     public float exclusionRadiusMultiplier = 1.5f;
 
     [Header("Inner region (shared)")]
-    [Tooltip("Inner radius (world units) around the click where InnerPushStrength is used. 0 = no inner region.")]
+    [Tooltip("Inner radius (world units) where InnerPushStrength is used. 0 = no inner region.")]
     public float innerRadius = 0.0f;
     [Tooltip("Force used inside the inner radius. Example: small negative for gentle inward pull.")]
     public float innerPushStrength = -5.0f;
-
-    [Header("Debug")]
-    public bool logEvents = false;
-
-    [Header("Mode (P1)")]
-    public ClickMode mode = ClickMode.HoldToPush;
 
     [Header("Cursor visuals")]
     // Player 1
@@ -119,6 +114,28 @@ public sealed class MeasurementClick : MonoBehaviour
 
     public float RotationSpeed = 10f;
     public float progressSpeed = 1f;
+
+    [Header("Radius scaling (holder/assister)")]
+    [Tooltip("How fast cursor radii lerp toward their target sizes.")]
+    public float radiusLerpSpeed = 8f;
+    [Tooltip("Scale applied to holder cursor (and radii).")]
+    public float holderRadiusMultiplier = 2f;
+    [Tooltip("Scale applied to assisting / disrupted cursor (and radii).")]
+    public float assistRadiusMultiplier = 2f / 3f;
+    [Tooltip("Inner pull multiplier while holding an identified actual (e.g. 0.5 = half strength).")]
+    public float holderInnerStrengthMultiplier = 0.5f;
+
+    [Header("Post-scan repulsion")]
+    [Tooltip("Duration after solo identification where inner force is flipped to push.")]
+    public float postIdentifyRepelDuration = 0.2f;
+    [Tooltip("Duration after full co-op scan where inner force is flipped to push.")]
+    public float postCoopRepelDuration = 0.2f;
+
+    [Header("Debug")]
+    public bool logEvents = false;
+
+    [Header("Mode (P1)")]
+    public ClickMode mode = ClickMode.HoldToPush;
 
     // ---------------- ECS fields ----------------
 
@@ -139,6 +156,20 @@ public sealed class MeasurementClick : MonoBehaviour
 
     bool _prevPressedP1;
     bool _prevPressedP2;
+
+    // Cached base radii for smooth scaling
+    bool _baseRadiiInitialized;
+    float _cursor1BaseRadius;
+    float _progress1BaseRadius;
+    float _cursor2BaseRadius;
+    float _progress2BaseRadius;
+
+    // Per-actual holder: actualIndex -> 1 (P1) or 2 (P2)
+    readonly Dictionary<int, int> _actualHolderIndexToPlayer = new();
+
+    // Post-scan repulsion timers
+    float _p1RepelTimer;
+    float _p2RepelTimer;
 
     void OnEnable()
     {
@@ -215,15 +246,47 @@ public sealed class MeasurementClick : MonoBehaviour
                 _haveResultP2 = true;
             }
         }
+
+        InitBaseRadii();
     }
 
     void OnDisable()
     {
         _haveClickP1 = _haveClickP2 = false;
         _haveResultP1 = _haveResultP2 = false;
+        _actualHolderIndexToPlayer.Clear();
     }
 
-    // Called when P1’s progress bar completes a “scan”
+    void InitBaseRadii()
+    {
+        if (_baseRadiiInitialized) return;
+
+        if (Cursor1 != null)
+            _cursor1BaseRadius = Cursor1.Radius > 0f ? Cursor1.Radius : radius;
+        else
+            _cursor1BaseRadius = radius;
+
+        if (Progress1 != null)
+            _progress1BaseRadius = Progress1.Radius > 0f ? Progress1.Radius : radius;
+        else
+            _progress1BaseRadius = radius;
+
+        if (Cursor2 != null)
+            _cursor2BaseRadius = Cursor2.Radius > 0f ? Cursor2.Radius : radius;
+        else
+            _cursor2BaseRadius = radius;
+
+        if (Progress2 != null)
+            _progress2BaseRadius = Progress2.Radius > 0f ? Progress2.Radius : radius;
+        else
+            _progress2BaseRadius = radius;
+
+        _baseRadiiInitialized = true;
+    }
+
+    // ---------------- Identification complete (phase 1) ----------------
+
+    // Called when P1’s progress bar completes a “scan” (identification)
     void OnProgressCompleteP1()
     {
         if (!_haveResultP1 || !_em.Exists(_resultSingletonP1)) return;
@@ -241,14 +304,26 @@ public sealed class MeasurementClick : MonoBehaviour
         var cfgEntity = qCfg.GetSingletonEntity();
         var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEntity);
 
-        bool isGood = UnityEngine.Random.value > 0.5f;  // your real logic goes here
-        statusBuf[idx] = new ActualParticleStatusElement
+        if (idx >= 0 && idx < statusBuf.Length)
         {
-            Value = isGood ? ActualParticleStatus.Good : ActualParticleStatus.Bad
-        };
+            bool isGood = UnityEngine.Random.value > 0.5f;  // your real logic goes here
+            statusBuf[idx] = new ActualParticleStatusElement
+            {
+                Value = isGood ? ActualParticleStatus.Good : ActualParticleStatus.Bad
+            };
+
+            // Notify pool: Unknown -> Good/Bad (will schedule new Unknown if Good)
+            ActualParticlePoolSystem.NotifyIdentified(idx, isGood);
+
+            // Clear any holder mapping for this index so future holds are clean
+            _actualHolderIndexToPlayer.Remove(idx);
+
+            // Start a short repulsion window for P1 to push walkers away
+            _p1RepelTimer = Mathf.Max(_p1RepelTimer, postIdentifyRepelDuration);
+        }
     }
 
-    // Called when P2’s progress bar completes a “scan”
+    // Called when P2’s progress bar completes a “scan” (identification)
     void OnProgressCompleteP2()
     {
         if (!_haveResultP2 || !_em.Exists(_resultSingletonP2)) return;
@@ -266,37 +341,102 @@ public sealed class MeasurementClick : MonoBehaviour
         var cfgEntity = qCfg.GetSingletonEntity();
         var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEntity);
 
-        bool isGood = UnityEngine.Random.value > 0.5f;  // your real logic goes here
-        statusBuf[idx] = new ActualParticleStatusElement
+        if (idx >= 0 && idx < statusBuf.Length)
         {
-            Value = isGood ? ActualParticleStatus.Good : ActualParticleStatus.Bad
-        };
+            bool isGood = UnityEngine.Random.value > 0.5f;  // your real logic goes here
+            statusBuf[idx] = new ActualParticleStatusElement
+            {
+                Value = isGood ? ActualParticleStatus.Good : ActualParticleStatus.Bad
+            };
+
+            ActualParticlePoolSystem.NotifyIdentified(idx, isGood);
+
+            _actualHolderIndexToPlayer.Remove(idx);
+
+            // Repulsion window for P2
+            _p2RepelTimer = Mathf.Max(_p2RepelTimer, postIdentifyRepelDuration);
+        }
     }
 
-    bool IsActualAlreadyIdentified(int index)
-    {
-        if (index < 0) return false;
+    // ---------------- Coop full-scan complete (phase 2) ----------------
 
-        // Query actual particle config
+    void CoopCompleteP1()
+    {
+        if (!_haveResultP1 || !_em.Exists(_resultSingletonP1)) return;
+
+        var result = _em.GetComponentData<MeasurementResult>(_resultSingletonP1);
+        int idx = result.ClosestActualIndex;
+        if (idx < 0) return;
+
         var qCfg = _em.CreateEntityQuery(
             typeof(ActualParticleSet),
             typeof(ActualParticleStatusElement)
         );
-        if (qCfg.IsEmpty) return false;
+        if (qCfg.IsEmpty) return;
 
         var cfgEntity = qCfg.GetSingletonEntity();
         var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEntity);
 
-        if (index >= statusBuf.Length) return false;
+        if (idx >= 0 && idx < statusBuf.Length)
+        {
+            var st = statusBuf[idx].Value;
+            bool wasGood = (st == ActualParticleStatus.Good);
 
-        var status = statusBuf[index].Value;
-        return status == ActualParticleStatus.Good ||
-               status == ActualParticleStatus.Bad;
+            // Coop full scan: send back to pool, spawn 1 (good) or 2 (bad)
+            ActualParticlePoolSystem.NotifyFullyScanned(idx, wasGood);
+
+            // Index no longer held
+            _actualHolderIndexToPlayer.Remove(idx);
+
+            // Start repulsion window for BOTH players (they were both involved in coop)
+            _p1RepelTimer = Mathf.Max(_p1RepelTimer, postCoopRepelDuration);
+            _p2RepelTimer = Mathf.Max(_p2RepelTimer, postCoopRepelDuration);
+        }
+    }
+
+    void CoopCompleteP2()
+    {
+        // Currently unused to avoid double-spawning; left for future if needed.
+        if (!_haveResultP2 || !_em.Exists(_resultSingletonP2)) return;
+
+        var result = _em.GetComponentData<MeasurementResultP2>(_resultSingletonP2);
+        int idx = result.ClosestActualIndex;
+        if (idx < 0) return;
+
+        var qCfg = _em.CreateEntityQuery(
+            typeof(ActualParticleSet),
+            typeof(ActualParticleStatusElement)
+        );
+        if (qCfg.IsEmpty) return;
+
+        var cfgEntity = qCfg.GetSingletonEntity();
+        var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEntity);
+
+        if (idx >= 0 && idx < statusBuf.Length)
+        {
+            var st = statusBuf[idx].Value;
+            bool wasGood = (st == ActualParticleStatus.Good);
+
+            // If you ever enable this, don't also call from P1.
+            // ActualParticlePoolSystem.NotifyFullyScanned(idx, wasGood);
+            _actualHolderIndexToPlayer.Remove(idx);
+        }
     }
 
     void Update()
     {
-        if (!_haveClickP1 || !_em.Exists(_clickSingletonP1)) return;
+        if (!_haveClickP1 || !_em.Exists(_clickSingletonP1))
+            return;
+
+        InitBaseRadii();
+
+        // Tick repulsion timers
+        float dt = Time.deltaTime;
+        if (_p1RepelTimer > 0f) _p1RepelTimer = Mathf.Max(0f, _p1RepelTimer - dt);
+        if (_p2RepelTimer > 0f) _p2RepelTimer = Mathf.Max(0f, _p2RepelTimer - dt);
+
+        bool p1RepelActive = _p1RepelTimer > 0f;
+        bool p2RepelActive = _p2RepelTimer > 0f;
 
         // Ensure result singletons exist (in case systems were initialized later)
         if (!_haveResultP1)
@@ -329,229 +469,558 @@ public sealed class MeasurementClick : MonoBehaviour
         BaseMouseCursor cursorP2 = cursorList.Count > 1 ? cursorList[1] : null;
 
         // =========================================================
-        // PLAYER 1
+        // 1) Read raw input + world positions for both players
         // =========================================================
-        if (cursorP1 != null && cursorP1.Enabled)
+        bool p1Available = cursorP1 != null && cursorP1.Enabled;
+        bool p2Available = cursorP2 != null && cursorP2.Enabled;
+
+        bool pressedP1 = false, edgeDownP1 = false, edgeUpP1 = false;
+        bool pressedP2 = false, edgeDownP2 = false, edgeUpP2 = false;
+
+        float2 worldP1 = float2.zero;
+        float2 worldP2 = float2.zero;
+
+        if (p1Available)
         {
-            bool pressedP1 = cursorP1.Mouse.IsPressed(ChocDino.PartyIO.MouseButton.Left);
-            bool edgeDownP1 = pressedP1 && !_prevPressedP1;
-            bool edgeUpP1 = !pressedP1 && _prevPressedP1;
+            if (mode == ClickMode.HoldToPush)
+            {
+                pressedP1 = cursorP1.Mouse.IsPressed(MouseButton.Left);
+                edgeDownP1 = pressedP1 && !_prevPressedP1;
+                edgeUpP1 = !pressedP1 && _prevPressedP1;
+            }
+            else
+            {
+                pressedP1 = cursorP1.Mouse.IsPressed(MouseButton.Left) &&
+                            cursorP1.Mouse.WasPressedThisFrame(MouseButton.Left);
+                edgeDownP1 = pressedP1;
+                edgeUpP1 = false;
+            }
 
             Vector2 screenP1 = cursorP1.ScreenPosition;
-            float2 worldP1 = ScreenToWorldXY(screenP1, planeZ);
+            worldP1 = ScreenToWorldXY(screenP1, planeZ);
 
             if (AimCursorPlayer1 != null)
                 AimCursorPlayer1.position = new Vector2(worldP1.x, worldP1.y);
+        }
 
-            bool hasActualInsideP1 = false;
-            if (_haveResultP1 && _em.Exists(_resultSingletonP1))
+        if (p2Available)
+        {
+            pressedP2 = cursorP2.Mouse.IsPressed(MouseButton.Left);
+            edgeDownP2 = pressedP2 && !_prevPressedP2;
+            edgeUpP2 = !pressedP2 && _prevPressedP2;
+
+            Vector2 screenP2 = cursorP2.ScreenPosition;
+            worldP2 = ScreenToWorldXY(screenP2, planeZ);
+
+            if (AimCursorPlayer2 != null)
+                AimCursorPlayer2.position = new Vector2(worldP2.x, worldP2.y);
+        }
+
+        // =========================================================
+        // 2) Read MeasurementResult for both players
+        // =========================================================
+        bool hasActualInsideP1 = false;
+        bool hasActualInsideP2 = false;
+        int idxP1 = -1, idxP2 = -1;
+
+        if (_haveResultP1 && _em.Exists(_resultSingletonP1))
+        {
+            _lastResultP1 = _em.GetComponentData<MeasurementResult>(_resultSingletonP1);
+            hasActualInsideP1 = _lastResultP1.HasActualInRadius;
+            idxP1 = _lastResultP1.ClosestActualIndex;
+        }
+
+        if (_haveResultP2 && _em.Exists(_resultSingletonP2))
+        {
+            _lastResultP2 = _em.GetComponentData<MeasurementResultP2>(_resultSingletonP2);
+            hasActualInsideP2 = _lastResultP2.HasActualInRadius;
+            idxP2 = _lastResultP2.ClosestActualIndex;
+        }
+
+        // =========================================================
+        // 3) Read actual particle statuses (Unknown / Good / Bad)
+        // =========================================================
+        ActualParticleStatus[] statusArray = null;
+        {
+            var qCfg = _em.CreateEntityQuery(
+                typeof(ActualParticleSet),
+                typeof(ActualParticleStatusElement)
+            );
+            if (!qCfg.IsEmptyIgnoreFilter)
             {
-                _lastResultP1 = _em.GetComponentData<MeasurementResult>(_resultSingletonP1);
-                hasActualInsideP1 = _lastResultP1.HasActualInRadius;
+                var cfgEntity = qCfg.GetSingletonEntity();
+                var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEntity);
+                int count = statusBuf.Length;
+                statusArray = new ActualParticleStatus[count];
+                for (int i = 0; i < count; i++)
+                    statusArray[i] = statusBuf[i].Value;
             }
+        }
 
-            // Cursor visuals
-            if (Cursor1 != null && Progress1 != null)
+        bool isIdentifiedP1 = false;
+        bool isIdentifiedP2 = false;
+
+        if (statusArray != null)
+        {
+            if (hasActualInsideP1 && idxP1 >= 0 && idxP1 < statusArray.Length)
             {
-                if (pressedP1)
+                var st = statusArray[idxP1];
+                isIdentifiedP1 = (st == ActualParticleStatus.Good || st == ActualParticleStatus.Bad);
+            }
+            if (hasActualInsideP2 && idxP2 >= 0 && idxP2 < statusArray.Length)
+            {
+                var st = statusArray[idxP2];
+                isIdentifiedP2 = (st == ActualParticleStatus.Good || st == ActualParticleStatus.Bad);
+            }
+        }
+
+        // =========================================================
+        // 4) Determine per-actual holders, near-holder shrink, assisting and disruption
+        // =========================================================
+
+        bool p1ScanningIdent = p1Available && pressedP1 && hasActualInsideP1 && isIdentifiedP1 && idxP1 >= 0;
+        bool p2ScanningIdent = p2Available && pressedP2 && hasActualInsideP2 && isIdentifiedP2 && idxP2 >= 0;
+
+        int holderForIdxP1 = 0;
+        int holderForIdxP2 = 0;
+
+        // Register holders per actual index (first come wins)
+        if (p1ScanningIdent)
+        {
+            if (!_actualHolderIndexToPlayer.TryGetValue(idxP1, out holderForIdxP1))
+            {
+                _actualHolderIndexToPlayer[idxP1] = 1;
+                holderForIdxP1 = 1;
+            }
+        }
+        if (p2ScanningIdent)
+        {
+            if (!_actualHolderIndexToPlayer.TryGetValue(idxP2, out holderForIdxP2))
+            {
+                _actualHolderIndexToPlayer[idxP2] = 2;
+                holderForIdxP2 = 2;
+            }
+        }
+
+        bool p1IsHolder = p1ScanningIdent && holderForIdxP1 == 1;
+        bool p2IsHolder = p2ScanningIdent && holderForIdxP2 == 2;
+
+        float holderRadiusWorld = radius * holderRadiusMultiplier;
+        float distP1P2 = 0f;
+        if (p1Available && p2Available)
+            distP1P2 = math.length(worldP1 - worldP2);
+
+        // --- Disruption: two holders for different actuals collide ---
+        bool holdersDifferentActual =
+            p1IsHolder && p2IsHolder &&
+            idxP1 >= 0 && idxP2 >= 0 &&
+            idxP1 != idxP2;
+
+        bool holdersCollide =
+            holdersDifferentActual &&
+            p1Available && p2Available &&
+            distP1P2 <= holderRadiusWorld;
+
+        bool p1Disrupted = false;
+        bool p2Disrupted = false;
+
+        if (holdersCollide)
+        {
+            p1Disrupted = true;
+            p2Disrupted = true;
+
+            _actualHolderIndexToPlayer.Remove(idxP1);
+            _actualHolderIndexToPlayer.Remove(idxP2);
+
+            p1IsHolder = false;
+            p2IsHolder = false;
+        }
+
+        // --- Near-holder shrink: purely cursor-to-cursor distance to a holder ---
+        bool p1NearHolder = false;
+        bool p2NearHolder = false;
+
+        if (p1Available && p2Available && !p1Disrupted && !p2Disrupted)
+        {
+            if (p1IsHolder && distP1P2 <= holderRadiusWorld * exclusionRadiusMultiplier)
+                p2NearHolder = true;
+
+            if (p2IsHolder && distP1P2 <= holderRadiusWorld * exclusionRadiusMultiplier)
+                p1NearHolder = true;
+        }
+
+        // --- Assisting: near-holder + scanning the SAME identified actual ---
+        bool sameIdentIdx =
+            hasActualInsideP1 && hasActualInsideP2 &&
+            isIdentifiedP1 && isIdentifiedP2 &&
+            idxP1 >= 0 && idxP2 >= 0 &&
+            idxP1 == idxP2;
+
+        bool p1Assisting = p1NearHolder && pressedP1 && sameIdentIdx && !p1IsHolder && !p1Disrupted;
+        bool p2Assisting = p2NearHolder && pressedP2 && sameIdentIdx && !p2IsHolder && !p2Disrupted;
+
+        bool coopSameActual =
+            sameIdentIdx &&
+            ((p1IsHolder && p2Assisting) || (p2IsHolder && p1Assisting));
+
+        // =========================================================
+        // 5) Cursor visuals + progress logic
+        // =========================================================
+
+        float p1RadiusScale = 1f;
+        float p2RadiusScale = 1f;
+
+        // While repelling, we do NOT grow/shrink the cursor radius
+        if (!p1RepelActive)
+        {
+            if (p1IsHolder)
+                p1RadiusScale = holderRadiusMultiplier;
+            else if (p1NearHolder || p1Disrupted)
+                p1RadiusScale = assistRadiusMultiplier;
+        }
+
+        if (!p2RepelActive)
+        {
+            if (p2IsHolder)
+                p2RadiusScale = holderRadiusMultiplier;
+            else if (p2NearHolder || p2Disrupted)
+                p2RadiusScale = assistRadiusMultiplier;
+        }
+
+        float coopMinClamp = -1.5f * Mathf.PI;
+        float halfClamp = -0.5f * Mathf.PI;
+
+        // --- Player 1 visuals ---
+        if (p1Available && Cursor1 != null && Progress1 != null)
+        {
+            Cursor1.Radius = Mathf.Lerp(
+                Cursor1.Radius,
+                _cursor1BaseRadius * p1RadiusScale,
+                radiusLerpSpeed * Time.deltaTime
+            );
+            Progress1.Radius = Mathf.Lerp(
+                Progress1.Radius,
+                _progress1BaseRadius * p1RadiusScale,
+                radiusLerpSpeed * Time.deltaTime
+            );
+
+            if (pressedP1)
+            {
+                Cursor1.DashType = Shapes.DashType.Angled;
+                Cursor1.DashSize = 5f;
+                Cursor1.DashSpacing = 2.5f;
+                Cursor1.Thickness = 2 * Mathf.PI;
+
+                Cursor1.DashOffset = (Cursor1.DashOffset + RotationSpeed * Time.deltaTime) % 1000000f;
+
+                if (hasActualInsideP1)
                 {
-                    Cursor1.DashType = Shapes.DashType.Angled;
-                    Cursor1.DashSize = 5f;
-                    Cursor1.DashSpacing = 2.5f;
-                    Cursor1.Thickness = 2 * Mathf.PI;
+                    Cursor1.Thickness = 4 * Mathf.PI;
+                    Cursor1.DashSize = 7f;
 
-                    Cursor1.DashOffset = (Cursor1.DashOffset + RotationSpeed * Time.deltaTime) % 1000000f;
-
-                    if (hasActualInsideP1)
+                    if (!isIdentifiedP1)
                     {
-                        int idx = _lastResultP1.ClosestActualIndex;
-                        bool alreadyIdentified = IsActualAlreadyIdentified(idx);
+                        // Phase 1: identify (first half)
+                        Progress1.AngRadiansEnd -= Time.deltaTime * progressSpeed;
+                        Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, halfClamp, 0.5f * Mathf.PI);
 
-                        Cursor1.Thickness = 4 * Mathf.PI;
-                        Cursor1.DashSize = 7f;
+                        Cursor1.AngRadiansStart -= Time.deltaTime * progressSpeed;
+                        Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, halfClamp, 0.5f * Mathf.PI);
 
-                        if (alreadyIdentified)
-                        {
-                            // Instantly filled / locked
-                            Progress1.AngRadiansEnd = -0.5f * Mathf.PI;
-                            Cursor1.AngRadiansStart = -0.5f * Mathf.PI;
-                        }
-                        else
-                        {
-                            // Normal scanning countdown
-                            Progress1.AngRadiansEnd -= Time.deltaTime * progressSpeed;
-                            Progress1.AngRadiansEnd = Mathf.Clamp(
-                                Progress1.AngRadiansEnd, -0.5f * Mathf.PI, 0.5f * Mathf.PI
-                            );
-
-                            Cursor1.AngRadiansStart -= Time.deltaTime * progressSpeed;
-                            Cursor1.AngRadiansStart = Mathf.Clamp(
-                                Cursor1.AngRadiansStart, -0.5f * Mathf.PI, 0.5f * Mathf.PI
-                            );
-
-                            bool didComplete = Mathf.Approximately(Progress1.AngRadiansEnd, -0.5f * Mathf.PI);
-                            if (didComplete)
-                                OnProgressCompleteP1();
-                        }
+                        bool didComplete = Mathf.Approximately(Progress1.AngRadiansEnd, halfClamp);
+                        if (didComplete)
+                            OnProgressCompleteP1();
                     }
                     else
                     {
-                        Progress1.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
-                        Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
+                        // Phase 2: already identified
+                        if (coopSameActual && (p1IsHolder || p1Assisting))
+                        {
+                            // Both scanning same identified actual → progress toward full circle
+                            Progress1.AngRadiansEnd -= Time.deltaTime * 2 * progressSpeed;
+                            Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, coopMinClamp, halfClamp);
 
-                        Cursor1.AngRadiansStart += Time.deltaTime * 8f * progressSpeed;
-                        Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
+                            Cursor1.AngRadiansStart -= Time.deltaTime * 2 * progressSpeed;
+                            Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, coopMinClamp, halfClamp);
+
+                            if (Cursor1.AngRadiansStart == coopMinClamp)
+                            {
+                                // Coop full-scan reached: notify once via P1
+                                CoopCompleteP1();
+
+                                // Reset both cursors to neutral half-band
+                                if (Cursor1 != null)
+                                    Cursor1.AngRadiansStart = 0.5f * Mathf.PI;
+                                if (Progress1 != null)
+                                    Progress1.AngRadiansEnd = 0.5f * Mathf.PI;
+                                if (Cursor2 != null)
+                                    Cursor2.AngRadiansStart = 0.5f * Mathf.PI;
+                                if (Progress2 != null)
+                                    Progress2.AngRadiansEnd = 0.5f * Mathf.PI;
+
+                                p1IsHolder = false;
+                                p2IsHolder = false;
+                                p1Assisting = false;
+                                p2Assisting = false;
+                                coopSameActual = false;
+                            }
+
+                        }
+                        else
+                        {
+                            // Not in co-op: lerp back toward half circle
+                            float target = halfClamp;
+                            float step = Time.deltaTime * 4f * progressSpeed;
+                            Progress1.AngRadiansEnd = Mathf.MoveTowards(Progress1.AngRadiansEnd, target, step);
+                            Cursor1.AngRadiansStart = Mathf.MoveTowards(Cursor1.AngRadiansStart, target, step);
+                        }
                     }
                 }
                 else
                 {
-                    Cursor1.DashType = Shapes.DashType.Basic;
-                    Cursor1.DashSize = 2f;
-                    Cursor1.DashSpacing = 3f;
-                    Cursor1.Thickness = 5f;
-
-                    Cursor1.DashOffset = (Cursor1.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1000000f;
-
+                    // No actual under cursor: decay toward neutral half band
                     Progress1.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
-                    Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, -1.5f * Mathf.PI, 0.5f * Mathf.PI);
+                    Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, halfClamp, 0.5f * Mathf.PI);
 
                     Cursor1.AngRadiansStart += Time.deltaTime * 8f * progressSpeed;
-                    Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, -1.5f * Mathf.PI, 0.5f * Mathf.PI);
+                    Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, halfClamp, 0.5f * Mathf.PI);
+                }
+            }
+            else
+            {
+                Cursor1.DashType = Shapes.DashType.Basic;
+                Cursor1.DashSize = 2f;
+                Cursor1.DashSpacing = 3f;
+                Cursor1.Thickness = 5f;
+
+                Cursor1.DashOffset = (Cursor1.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1000000f;
+
+                // When not pressed, allow full decay over the whole circle
+                Progress1.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
+                Progress1.AngRadiansEnd = Mathf.Clamp(Progress1.AngRadiansEnd, coopMinClamp, 0.5f * Mathf.PI);
+
+                Cursor1.AngRadiansStart += Time.deltaTime * 8f * progressSpeed;
+                Cursor1.AngRadiansStart = Mathf.Clamp(Cursor1.AngRadiansStart, coopMinClamp, 0.5f * Mathf.PI);
+            }
+        }
+
+        // --- Player 2 visuals ---
+        if (p2Available && Cursor2 != null && Progress2 != null)
+        {
+            Cursor2.Radius = Mathf.Lerp(
+                Cursor2.Radius,
+                _cursor2BaseRadius * p2RadiusScale,
+                radiusLerpSpeed * Time.deltaTime
+            );
+            Progress2.Radius = Mathf.Lerp(
+                Progress2.Radius,
+                _progress2BaseRadius * p2RadiusScale,
+                radiusLerpSpeed * Time.deltaTime
+            );
+
+            if (pressedP2)
+            {
+                Cursor2.DashType = Shapes.DashType.Angled;
+                Cursor2.DashSize = 5f;
+                Cursor2.DashSpacing = 2.5f;
+                Cursor2.Thickness = 2 * Mathf.PI;
+
+                Cursor2.DashOffset = (Cursor2.DashOffset + RotationSpeed * Time.deltaTime) % 1000000f;
+
+                if (hasActualInsideP2)
+                {
+                    Cursor2.Thickness = 4 * Mathf.PI;
+                    Cursor2.DashSize = 7f;
+
+                    if (!isIdentifiedP2)
+                    {
+                        // Phase 1: identify (first half)
+                        Progress2.AngRadiansEnd -= Time.deltaTime * progressSpeed;
+                        Progress2.AngRadiansEnd = Mathf.Clamp(Progress2.AngRadiansEnd, halfClamp, 0.5f * Mathf.PI);
+
+                        Cursor2.AngRadiansStart -= Time.deltaTime * progressSpeed;
+                        Cursor2.AngRadiansStart = Mathf.Clamp(Cursor2.AngRadiansStart, halfClamp, 0.5f * Mathf.PI);
+
+                        bool didComplete2 = Mathf.Approximately(Progress2.AngRadiansEnd, halfClamp);
+                        if (didComplete2)
+                            OnProgressCompleteP2();
+                    }
+                    else
+                    {
+                        // Phase 2: identified
+                        if (coopSameActual && (p2IsHolder || p2Assisting))
+                        {
+                            Progress2.AngRadiansEnd -= Time.deltaTime * 2 * progressSpeed;
+                            Progress2.AngRadiansEnd = Mathf.Clamp(Progress2.AngRadiansEnd, coopMinClamp, halfClamp);
+
+                            Cursor2.AngRadiansStart -= Time.deltaTime * 2 * progressSpeed;
+                            Cursor2.AngRadiansStart = Mathf.Clamp(Cursor2.AngRadiansStart, coopMinClamp, halfClamp);
+                            // Coop completion driven by P1
+                        }
+                        else
+                        {
+                            float target = halfClamp;
+                            float step = Time.deltaTime * 4f * progressSpeed;
+                            Progress2.AngRadiansEnd = Mathf.MoveTowards(Progress2.AngRadiansEnd, target, step);
+                            Cursor2.AngRadiansStart = Mathf.MoveTowards(Cursor2.AngRadiansStart, target, step);
+                        }
+                    }
+                }
+                else
+                {
+                    Progress2.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
+                    Progress2.AngRadiansEnd = Mathf.Clamp(Progress2.AngRadiansEnd, halfClamp, 0.5f * Mathf.PI);
+
+                    Cursor2.AngRadiansStart += Time.deltaTime * 8f * progressSpeed;
+                    Cursor2.AngRadiansStart = Mathf.Clamp(Cursor2.AngRadiansStart, halfClamp, 0.5f * Mathf.PI);
+                }
+            }
+            else
+            {
+                Cursor2.DashType = Shapes.DashType.Basic;
+                Cursor2.DashSize = 2f;
+                Cursor2.DashSpacing = 3f;
+                Cursor2.Thickness = 5f;
+
+                Cursor2.DashOffset = (Cursor2.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1000000f;
+
+                Progress2.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
+                Progress2.AngRadiansEnd = Mathf.Clamp(Progress2.AngRadiansEnd, coopMinClamp, 0.5f * Mathf.PI);
+
+                Cursor2.AngRadiansStart += Time.deltaTime * 8f * progressSpeed;
+                Cursor2.AngRadiansStart = Mathf.Clamp(Cursor2.AngRadiansStart, coopMinClamp, 0.5f * Mathf.PI);
+            }
+        }
+
+        // =========================================================
+        // 6) Build & send ClickRequests with scaled radii / forces
+        // =========================================================
+
+        // --- Player 1 request ---
+        if (p1Available)
+        {
+            float radiusP1 = radius;
+            float exclMulP1 = exclusionRadiusMultiplier;
+            float innerRadiusP1 = innerRadius;
+            float pushP1 = pushStrength;
+            float innerPushP1 = innerPushStrength;
+
+            // While repelling, do NOT grow/shrink radii
+            if (!p1RepelActive)
+            {
+                if (p1IsHolder)
+                {
+                    radiusP1 *= holderRadiusMultiplier;
+                    innerRadiusP1 *= holderRadiusMultiplier;
+                    exclMulP1 *= holderRadiusMultiplier;
+                    innerPushP1 *= holderInnerStrengthMultiplier; // reduce inner pull while holding
+                }
+                else if (p1Assisting && pressedP1)
+                {
+                    // Assisting final scan: small radius, no force applied
+                    radiusP1 *= assistRadiusMultiplier;
+                    innerRadiusP1 *= assistRadiusMultiplier;
+                    exclMulP1 *= assistRadiusMultiplier;
+                    pushP1 = 0f;
+                    innerPushP1 = 0f;
+                }
+                else if (p1NearHolder || p1Disrupted)
+                {
+                    // Hovering near holder or disrupted: match small UI radius
+                    radiusP1 *= assistRadiusMultiplier;
+                    innerRadiusP1 *= assistRadiusMultiplier;
+                    exclMulP1 *= assistRadiusMultiplier;
                 }
             }
 
-            // Send ECS ClickRequest (P1)
+            // Post-scan repulsion: flip inner force to push while timer active
+            if (_p1RepelTimer > 0f)
+            {
+                innerPushP1 = Mathf.Abs(innerPushStrength); // ensure outward
+            }
+
             var reqP1 = new ClickRequest
             {
                 WorldPos = worldP1,
-                Radius = radius,
-                PushStrength = pushStrength,
+                Radius = radiusP1,
+                PushStrength = pushP1,
                 IsPressed = pressedP1,
                 EdgeDown = edgeDownP1,
                 EdgeUp = edgeUpP1,
-                ExclusionRadiusMultiplier = exclusionRadiusMultiplier,
-                InnerRadius = innerRadius,
-                InnerPushStrength = innerPushStrength
+                ExclusionRadiusMultiplier = exclMulP1,
+                InnerRadius = innerRadiusP1,
+                InnerPushStrength = innerPushP1
             };
             _em.SetComponentData(_clickSingletonP1, reqP1);
 
             if (logEvents && (edgeDownP1 || edgeUpP1 || pressedP1 != _prevPressedP1))
             {
                 Debug.Log($"[Click P1] pressed={pressedP1} down={edgeDownP1} up={edgeUpP1} " +
-                          $"world={worldP1} R={radius} outerPush={pushStrength} innerR={innerRadius} innerPush={innerPushStrength}");
+                          $"world={worldP1} R={radiusP1} outerPush={pushP1} innerR={innerRadiusP1} innerPush={innerPushP1} " +
+                          $"holder={p1IsHolder} assisting={p1Assisting} nearHolder={p1NearHolder} disrupted={p1Disrupted} repelTimer={_p1RepelTimer}");
             }
 
             _prevPressedP1 = pressedP1;
         }
 
-        // =========================================================
-        // PLAYER 2
-        // =========================================================
-        if (cursorP2 != null && cursorP2.Enabled && AimCursorPlayer2 != null)
+        // --- Player 2 request ---
+        if (p2Available)
         {
-            bool pressedP2 = cursorP2.Mouse.IsPressed(ChocDino.PartyIO.MouseButton.Left);
-            bool edgeDownP2 = pressedP2 && !_prevPressedP2;
-            bool edgeUpP2 = !pressedP2 && _prevPressedP2;
+            float radiusP2 = radius;
+            float exclMulP2 = exclusionRadiusMultiplier;
+            float innerRadiusP2 = innerRadius;
+            float pushP2 = pushStrength;
+            float innerPushP2 = innerPushStrength;
 
-            Vector2 screenP2 = cursorP2.ScreenPosition;
-            float2 worldP2 = ScreenToWorldXY(screenP2, planeZ);
-
-            AimCursorPlayer2.position = new Vector2(worldP2.x, worldP2.y);
-
-            bool hasActualInsideP2 = false;
-            if (_haveResultP2 && _em.Exists(_resultSingletonP2))
+            if (!p2RepelActive)
             {
-                _lastResultP2 = _em.GetComponentData<MeasurementResultP2>(_resultSingletonP2);
-                hasActualInsideP2 = _lastResultP2.HasActualInRadius;
+                if (p2IsHolder)
+                {
+                    radiusP2 *= holderRadiusMultiplier;
+                    innerRadiusP2 *= holderRadiusMultiplier;
+                    exclMulP2 *= holderRadiusMultiplier;
+                    innerPushP2 *= holderInnerStrengthMultiplier;
+                }
+                else if (p2Assisting && pressedP2)
+                {
+                    radiusP2 *= assistRadiusMultiplier;
+                    innerRadiusP2 *= assistRadiusMultiplier;
+                    exclMulP2 *= assistRadiusMultiplier;
+                    pushP2 = 0f;
+                    innerPushP2 = 0f;
+                }
+                else if (p2NearHolder || p2Disrupted)
+                {
+                    radiusP2 *= assistRadiusMultiplier;
+                    innerRadiusP2 *= assistRadiusMultiplier;
+                    exclMulP2 *= assistRadiusMultiplier;
+                }
             }
 
-            if (Cursor2 != null && Progress2 != null)
+            if (_p2RepelTimer > 0f)
             {
-                if (pressedP2)
-                {
-                    Cursor2.DashType = Shapes.DashType.Angled;
-                    Cursor2.DashSize = 5f;
-                    Cursor2.DashSpacing = 2.5f;
-                    Cursor2.Thickness = 2 * Mathf.PI;
-
-                    Cursor2.DashOffset = (Cursor2.DashOffset + RotationSpeed * Time.deltaTime) % 1000000f;
-
-                    if (hasActualInsideP2)
-                    {
-                        int idx = _lastResultP2.ClosestActualIndex;
-                        bool alreadyIdentified = IsActualAlreadyIdentified(idx);
-
-                        Cursor2.Thickness = 4 * Mathf.PI;
-                        Cursor2.DashSize = 7f;
-
-                        if (alreadyIdentified)
-                        {
-                            // Lock filled
-                            Progress2.AngRadiansEnd = -0.5f * Mathf.PI;
-                            Cursor2.AngRadiansStart = -0.5f * Mathf.PI;
-                        }
-                        else
-                        {
-                            Progress2.AngRadiansEnd -= Time.deltaTime * progressSpeed;
-                            Progress2.AngRadiansEnd = Mathf.Clamp(
-                                Progress2.AngRadiansEnd, -0.5f * Mathf.PI, 0.5f * Mathf.PI
-                            );
-
-                            Cursor2.AngRadiansStart -= Time.deltaTime * progressSpeed;
-                            Cursor2.AngRadiansStart = Mathf.Clamp(
-                                Cursor2.AngRadiansStart, -0.5f * Mathf.PI, 0.5f * Mathf.PI
-                            );
-
-                            bool didComplete2 = Mathf.Approximately(Progress2.AngRadiansEnd, -0.5f * Mathf.PI);
-                            if (didComplete2)
-                                OnProgressCompleteP2();
-                        }
-                    }
-
-                    else
-                    {
-                        Progress2.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
-                        Progress2.AngRadiansEnd = Mathf.Clamp(Progress2.AngRadiansEnd, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
-
-                        Cursor2.AngRadiansStart += Time.deltaTime * 8f * progressSpeed;
-                        Cursor2.AngRadiansStart = Mathf.Clamp(Cursor2.AngRadiansStart, -0.5f * Mathf.PI, 0.5f * Mathf.PI);
-                    }
-                }
-                else
-                {
-                    Cursor2.DashType = Shapes.DashType.Basic;
-                    Cursor2.DashSize = 2f;
-                    Cursor2.DashSpacing = 3f;
-                    Cursor2.Thickness = 5f;
-
-                    Cursor2.DashOffset = (Cursor2.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1000000f;
-
-                    Progress2.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
-                    Progress2.AngRadiansEnd = Mathf.Clamp(Progress2.AngRadiansEnd, -1.5f * Mathf.PI, 0.5f * Mathf.PI);
-
-                    Cursor2.AngRadiansStart += Time.deltaTime * 8f * progressSpeed;
-                    Cursor2.AngRadiansStart = Mathf.Clamp(Cursor2.AngRadiansStart, -1.5f * Mathf.PI, 0.5f * Mathf.PI);
-                }
+                innerPushP2 = Mathf.Abs(innerPushStrength);
             }
 
             var reqP2 = new ClickRequestP2
             {
                 WorldPos = worldP2,
-                Radius = radius,
-                PushStrength = pushStrength,
+                Radius = radiusP2,
+                PushStrength = pushP2,
                 IsPressed = pressedP2,
                 EdgeDown = edgeDownP2,
                 EdgeUp = edgeUpP2,
-                ExclusionRadiusMultiplier = exclusionRadiusMultiplier,
-                InnerRadius = innerRadius,
-                InnerPushStrength = innerPushStrength
+                ExclusionRadiusMultiplier = exclMulP2,
+                InnerRadius = innerRadiusP2,
+                InnerPushStrength = innerPushP2
             };
             _em.SetComponentData(_clickSingletonP2, reqP2);
 
             if (logEvents && (edgeDownP2 || edgeUpP2 || pressedP2 != _prevPressedP2))
             {
                 Debug.Log($"[Click P2] pressed={pressedP2} down={edgeDownP2} up={edgeUpP2} " +
-                          $"world={worldP2} R={radius} outerPush={pushStrength} innerR={innerRadius} innerPush={innerPushStrength}");
+                          $"world={worldP2} R={radiusP2} outerPush={pushP2} innerR={innerRadiusP2} innerPush={innerPushP2} " +
+                          $"holder={p2IsHolder} assisting={p2Assisting} nearHolder={p2NearHolder} disrupted={p2Disrupted} repelTimer={_p2RepelTimer}");
             }
 
             _prevPressedP2 = pressedP2;

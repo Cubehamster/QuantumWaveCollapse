@@ -87,7 +87,9 @@
     <Compile Include="Assets\GPUDensityRenderer.cs" />
     <Compile Include="Assets\BoundsGizmo2D.cs" />
     <Compile Include="Assets\SimBounds2DAuthoring.cs" />
+    <Compile Include="Assets\StabilityUI.cs" />
     <Compile Include="Assets\PositionsUploadSystem.cs" />
+    <Compile Include="Assets\ActualParticlePoolSystem.cs" />
     <Compile Include="Assets\Particles.SimulateSystem.cs" />
     <Compile Include="Assets\WalkerTag.cs" />
     <Compile Include="Assets\Particles.Components.cs" />

@@ -746,8 +746,6 @@ MonoBehaviour:
   exclusionRadiusMultiplier: 0.55
   innerRadius: 120
   innerPushStrength: -50
-  logEvents: 0
-  mode: 0
   AimCursorPlayer1: {fileID: 1105114898}
   Cursor1: {fileID: 1173249797}
   Progress1: {fileID: 616045403}
@@ -756,6 +754,14 @@ MonoBehaviour:
   Progress2: {fileID: 1875169235}
   RotationSpeed: 2
   progressSpeed: 1
+  radiusLerpSpeed: 8
+  holderRadiusMultiplier: 2
+  assistRadiusMultiplier: 0.8
+  holderInnerStrengthMultiplier: 0.5
+  postIdentifyRepelDuration: 0.5
+  postCoopRepelDuration: 0.5
+  logEvents: 0
+  mode: 0
 --- !u!114 &448779960
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -799,6 +805,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 471521573}
+  - component: {fileID: 471521574}
   m_Layer: 0
   m_Name: Stability UI
   m_TagString: Untagged
@@ -828,6 +835,20 @@ RectTransform:
   m_AnchoredPosition: {x: 196.37, y: 119.649994}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &471521574
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 471521572}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 02c3d44712e97f944ae781349a66fa29, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  GoodBar: {fileID: 1568882232}
+  BadBar: {fileID: 1985056009}
 --- !u!1 &616045398
 GameObject:
   m_ObjectHideFlags: 0
@@ -988,7 +1009,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   blendMode: 1
   scaleMode: 0
-  color: {r: 0.14420103, g: 1.7207952, b: 0.09009397, a: 1}
+  color: {r: 0.47932175, g: 0.22950706, b: 2.297397, a: 1}
   detailLevel: 2
   culling: 0
   boundsPadding: 0
@@ -1551,7 +1572,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   blendMode: 1
   scaleMode: 0
-  color: {r: 1, g: 0.06666667, b: 0.33333334, a: 1}
+  color: {r: 0.17532086, g: 1.319508, b: 0.17532086, a: 1}
   detailLevel: 2
   culling: 0
   boundsPadding: 0
@@ -1753,7 +1774,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   blendMode: 1
   scaleMode: 0
-  color: {r: 0.14420103, g: 1.7207952, b: 0.09009397, a: 1}
+  color: {r: 0.47932175, g: 0.22950706, b: 2.297397, a: 1}
   detailLevel: 2
   culling: 0
   boundsPadding: 0
@@ -1896,7 +1917,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   blendMode: 1
   scaleMode: 0
-  color: {r: 0.627451, g: 0.03137255, b: 0.27058825, a: 1}
+  color: {r: 1.2167859, g: 0, b: 0, a: 1}
   detailLevel: 2
   culling: 0
   boundsPadding: 0
@@ -1911,7 +1932,7 @@ MonoBehaviour:
   stencilReadMask: 255
   stencilWriteMask: 255
   pivot: 0
-  width: 6.61
+  width: 9.71
   height: 1.8
   type: 1
   cornerRadiusMode: 1
@@ -2064,7 +2085,7 @@ MonoBehaviour:
   colorInnerEnd: {r: 1, g: 1, b: 1, a: 1}
   colorOuterEnd: {r: 1, g: 1, b: 1, a: 1}
   geometry: 0
-  angUnitInput: 0
+  angUnitInput: 2
   angRadiansStart: 1.5707964
   angRadiansEnd: -4.712389
   radius: 120

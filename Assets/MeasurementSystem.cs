@@ -22,6 +22,7 @@ using UnityEngine;
 [WorldSystemFilter(WorldSystemFilterFlags.Default)]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [UpdateAfter(typeof(LangevinWalkSystem))]
+
 public partial struct MeasurementSystem : ISystem
 {
     EntityQuery _walkersQ;

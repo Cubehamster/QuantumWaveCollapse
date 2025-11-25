@@ -4,7 +4,13 @@ using UnityEngine;
 
 public sealed class ActualParticlesAuthoring : MonoBehaviour
 {
-    [Min(1)] public int desiredCount = 3;
+    [Header("How many actuals should be active at start")]
+    [Min(1)] public int desiredActiveCount = 2;
+
+    [Header("Total pool size (max number of actual slots)")]
+    [Min(1)] public int poolSize = 50;
+
+    [Header("Random seed for selecting walkers")]
     public uint seed = 12345;
 
     class Baker : Baker<ActualParticlesAuthoring>
@@ -13,32 +19,49 @@ public sealed class ActualParticlesAuthoring : MonoBehaviour
         {
             var e = GetEntity(TransformUsageFlags.None);
 
-            // Singleton that stores how many we want
-            AddComponent(e, new ActualParticleSet { DesiredCount = math.max(1, a.desiredCount) });
+            int desired = math.max(1, a.desiredActiveCount);
+            int pool = math.max(desired, a.poolSize);
+
+            // Singleton that stores counts and debug info
+            AddComponent(e, new ActualParticleSet
+            {
+                DesiredCount = desired,
+                PoolSize = pool,
+                TargetActive = 0
+            });
 
             // RNG state for deterministic selections
             uint s = (a.seed == 0u || a.seed == 0xFFFFFFFFu) ? 1u : a.seed;
             AddComponent(e, new ActualParticleRng { Value = s });
 
-            // Dynamic buffer of chosen walkers (filled at runtime)
+            // Pool buffers (length will be sized in ActualParticlePoolSystem)
             AddBuffer<ActualParticleRef>(e);
+            AddBuffer<ActualParticlePositionElement>(e);
+            AddBuffer<ActualParticleStatusElement>(e);
         }
     }
 }
 
-/// <summary>Singleton component holding target count for actual particles.</summary>
+/// <summary>
+/// Singleton component holding target counts for actual particles.
+/// </summary>
 public struct ActualParticleSet : IComponentData
 {
+    /// <summary>How many actuals should be active at startup.</summary>
     public int DesiredCount;
+
+    /// <summary>Maximum number of slots in the pool.</summary>
+    public int PoolSize;
+
+    /// <summary>Debug / info: how many are currently active (Walker != Entity.Null).</summary>
+    public int TargetActive;
 }
 
-/// <summary>RNG state component (on the same singleton entity).</summary>
 public struct ActualParticleRng : IComponentData
 {
     public uint Value;
 }
 
-/// <summary>Buffer of references to the chosen "actual" walker entities.</summary>
 public struct ActualParticleRef : IBufferElementData
 {
     public Entity Walker;

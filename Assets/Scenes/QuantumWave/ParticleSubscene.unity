@@ -192,7 +192,7 @@ MonoBehaviour:
   dtScale: 20
   velocityDamping: 0
   forceAccel: 100
-  maxSpeed: 20
+  maxSpeed: 18
   collapseJitterFrac: 0.01
 --- !u!114 &1933164176
 MonoBehaviour:

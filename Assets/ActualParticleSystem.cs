@@ -4,7 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 
-// -------- NEW: status types --------
+// -------- Status types --------
 public enum ActualParticleStatus : byte
 {
     Unknown = 0,
@@ -17,7 +17,7 @@ public struct ActualParticleStatusElement : IBufferElementData
     public ActualParticleStatus Value;
 }
 
-// Positions for multiple actual particles
+// Positions for multiple actual particles (one per pool slot)
 public struct ActualParticlePositionElement : IBufferElementData
 {
     public float2 Value;
@@ -25,6 +25,7 @@ public struct ActualParticlePositionElement : IBufferElementData
 
 [WorldSystemFilter(WorldSystemFilterFlags.Default)]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
+[UpdateAfter(typeof(ActualParticlePoolSystem))] // <<< ensure we run AFTER the pool assigns slots
 public partial struct ActualParticleSystem : ISystem
 {
     EntityQuery _walkersQ;
@@ -40,9 +41,10 @@ public partial struct ActualParticleSystem : ISystem
 
         _cfgQ = state.GetEntityQuery(
             ComponentType.ReadOnly<ActualParticleSet>(),
-            ComponentType.ReadWrite<ActualParticleRng>(),
             ComponentType.ReadWrite<ActualParticleRef>());
 
+        // We still acknowledge SelectActualParticleRequest, but we no longer do
+        // any reselection here; we just clear the tag so it doesn't pile up.
         _reqQ = state.GetEntityQuery(ComponentType.ReadOnly<SelectActualParticleRequest>());
 
         _singleApQ = state.GetEntityQuery(
@@ -61,125 +63,29 @@ public partial struct ActualParticleSystem : ISystem
         using var cfgs = _cfgQ.ToEntityArray(Allocator.Temp);
         var cfgEnt = cfgs[0]; // use first, ignore duplicates
 
-        // Ensure position buffer exists
+        // Ensure position & status buffers exist
         if (!em.HasBuffer<ActualParticlePositionElement>(cfgEnt))
             em.AddBuffer<ActualParticlePositionElement>(cfgEnt);
 
-        // NEW: ensure status buffer exists
         if (!em.HasBuffer<ActualParticleStatusElement>(cfgEnt))
             em.AddBuffer<ActualParticleStatusElement>(cfgEnt);
 
-        var set = em.GetComponentData<ActualParticleSet>(cfgEnt);
-        var rngState = em.GetComponentData<ActualParticleRng>(cfgEnt);
-        var selBuf = em.GetBuffer<ActualParticleRef>(cfgEnt);
-        var posBuf = em.GetBuffer<ActualParticlePositionElement>(cfgEnt);
-        var statusBuf = em.GetBuffer<ActualParticleStatusElement>(cfgEnt);
+        var refBuf = em.GetBuffer<ActualParticleRef>(cfgEnt);              // authoritative pool layout
+        var posBuf = em.GetBuffer<ActualParticlePositionElement>(cfgEnt);  // positions per slot
+        var statusBuf = em.GetBuffer<ActualParticleStatusElement>(cfgEnt);    // status per slot
 
-        int desired = math.max(1, set.DesiredCount);
-        int walkerCount = _walkersQ.CalculateEntityCount();
-        if (walkerCount == 0) return;
+        int slotCount = refBuf.Length;
 
-        using var walkers = _walkersQ.ToEntityArray(Allocator.Temp);
+        // ------------------------------------------------------------
+        // 1) Make sure position + status buffers track pool slot count
+        // ------------------------------------------------------------
+        if (posBuf.Length != slotCount)
+            posBuf.ResizeUninitialized(slotCount);
 
-        // Build set of currently chosen walkers (only valid ones)
-        var chosen = new NativeHashSet<Entity>(math.max(desired, selBuf.Length) * 2, Allocator.Temp);
-        for (int i = 0; i < selBuf.Length; i++)
-        {
-            var w = selBuf[i].Walker;
-            if (em.Exists(w) && em.HasComponent<Position>(w))
-                chosen.Add(w);
-        }
-
-        uint seed = Sanitize(rngState.Value);
-        var rnd = Unity.Mathematics.Random.CreateFromIndex(seed);
-
-        // Fill up to desired count
-        while (chosen.Count < desired && chosen.Count < walkerCount)
-        {
-            var pick = walkers[(int)(rnd.NextUInt() % (uint)walkerCount)];
-            chosen.Add(pick);
-        }
-
-        // Trim down if too many (randomly drops)
-        while (chosen.Count > desired)
-        {
-            var pick = walkers[(int)(rnd.NextUInt() % (uint)walkerCount)];
-            if (chosen.Contains(pick))
-                chosen.Remove(pick);
-        }
-
-        // Handle re-roll request: replace the first slot with a fresh random walker
-        if (!_reqQ.IsEmptyIgnoreFilter && chosen.Count > 0)
-        {
-            using var reqs = _reqQ.ToEntityArray(Allocator.Temp);
-            foreach (var r in reqs)
-                em.RemoveComponent<SelectActualParticleRequest>(r);
-
-            var walkersArr = walkers;
-            var old = selBuf.Length > 0 ? selBuf[0].Walker : Entity.Null;
-            if (old != Entity.Null)
-                chosen.Remove(old);
-
-            for (int tries = 0; tries < 512 && chosen.Count < desired; tries++)
-            {
-                var cand = walkersArr[(int)(rnd.NextUInt() % (uint)walkerCount)];
-                if (!chosen.Contains(cand))
-                {
-                    chosen.Add(cand);
-                    break;
-                }
-            }
-        }
-
-        // Store RNG back
-        rngState.Value = Sanitize(rnd.state);
-        em.SetComponentData(cfgEnt, rngState);
-
-        // --------------------------------------------------------------------
-        // Rebuild selBuf from 'chosen' set (keeping it dense, deterministic-ish).
-        // DO NOT clear statusBuf here; it tracks per-slot state (Unknown/Good/Bad).
-        // --------------------------------------------------------------------
-        int iBuf = 0;
-        for (int i = 0; i < walkers.Length; i++)
-        {
-            var w = walkers[i];
-            if (!chosen.Contains(w)) continue;
-
-            if (iBuf >= selBuf.Length)
-                selBuf.Add(new ActualParticleRef { Walker = w });
-            else
-                selBuf[iBuf] = new ActualParticleRef { Walker = w };
-
-            iBuf++;
-            if (iBuf >= desired) break;
-        }
-
-        if (iBuf < selBuf.Length)
-            selBuf.RemoveRange(iBuf, selBuf.Length - iBuf);
-
-        // --------------------------------------------------------------------
-        // Keep position buffer in sync with selBuf (one-to-one).
-        // --------------------------------------------------------------------
-        posBuf.ResizeUninitialized(selBuf.Length);
-        for (int i = 0; i < selBuf.Length; i++)
-        {
-            var w = selBuf[i].Walker;
-            posBuf[i] = new ActualParticlePositionElement
-            {
-                Value = (em.Exists(w) && em.HasComponent<Position>(w))
-                    ? em.GetComponentData<Position>(w).Value
-                    : float2.zero
-            };
-        }
-
-        // --------------------------------------------------------------------
-        // Keep status buffer length in sync with selBuf, but preserve existing
-        // statuses for the leading slots. New slots default to Unknown.
-        // --------------------------------------------------------------------
-        if (statusBuf.Length < selBuf.Length)
+        if (statusBuf.Length < slotCount)
         {
             int oldLen = statusBuf.Length;
-            for (int i = oldLen; i < selBuf.Length; i++)
+            for (int i = oldLen; i < slotCount; i++)
             {
                 statusBuf.Add(new ActualParticleStatusElement
                 {
@@ -187,21 +93,59 @@ public partial struct ActualParticleSystem : ISystem
                 });
             }
         }
-        else if (statusBuf.Length > selBuf.Length)
+        else if (statusBuf.Length > slotCount)
         {
-            statusBuf.RemoveRange(selBuf.Length, statusBuf.Length - selBuf.Length);
+            statusBuf.RemoveRange(slotCount, statusBuf.Length - slotCount);
         }
 
-        // --------------------------------------------------------------------
-        // Maintain legacy singletons: first actual is the "classic" ActualParticle
-        // --------------------------------------------------------------------
-        Entity first = selBuf.Length > 0 ? selBuf[0].Walker : Entity.Null;
+        // ------------------------------------------------------------
+        // 2) Sync positions for all pool slots
+        //    - If Walker != Entity.Null and has Position -> copy
+        //    - Else -> position = float2.zero (inactive / missing)
+        // ------------------------------------------------------------
+        for (int i = 0; i < slotCount; i++)
+        {
+            Entity w = refBuf[i].Walker;
+            float2 p = float2.zero;
+
+            if (w != Entity.Null && em.Exists(w) && em.HasComponent<Position>(w))
+            {
+                p = em.GetComponentData<Position>(w).Value;
+            }
+
+            posBuf[i] = new ActualParticlePositionElement { Value = p };
+        }
+
+        // ------------------------------------------------------------
+        // 3) Handle legacy singletons: first ACTIVE actual
+        // ------------------------------------------------------------
+        Entity firstWalker = Entity.Null;
         float2 firstPos = float2.zero;
 
-        if (first != Entity.Null && em.Exists(first) && em.HasComponent<Position>(first))
-            firstPos = em.GetComponentData<Position>(first).Value;
+        for (int i = 0; i < slotCount; i++)
+        {
+            Entity w = refBuf[i].Walker;
+            if (w == Entity.Null) continue;
 
-        EnsureLegacySingletons(ref state, first, first != Entity.Null, firstPos);
+            // first active slot wins
+            firstWalker = w;
+            firstPos = posBuf[i].Value;
+            break;
+        }
+
+        EnsureLegacySingletons(ref state, firstWalker, firstWalker != Entity.Null, firstPos);
+
+        // ------------------------------------------------------------
+        // 4) Clear any SelectActualParticleRequest tags (no reselection here)
+        // ------------------------------------------------------------
+        if (!_reqQ.IsEmptyIgnoreFilter)
+        {
+            using var reqs = _reqQ.ToEntityArray(Allocator.Temp);
+            foreach (var r in reqs)
+            {
+                em.RemoveComponent<SelectActualParticleRequest>(r);
+            }
+        }
     }
 
     void EnsureLegacySingletons(ref SystemState state, Entity firstWalker, bool hasFirst, float2 firstPos)
@@ -230,6 +174,4 @@ public partial struct ActualParticleSystem : ISystem
         ent = Entity.Null;
         return false;
     }
-
-    static uint Sanitize(uint s) => (s == 0u || s == 0xFFFFFFFFu) ? 1u : s;
 }
