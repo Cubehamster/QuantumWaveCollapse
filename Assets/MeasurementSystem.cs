@@ -17,12 +17,14 @@ using UnityEngine;
 ///     Inside R_inner: uses StrengthInner (e.g. small negative pull).
 ///     Between R_inner and R_outer: uses StrengthOuter.
 ///   - Only the closest actual can be pulled; other actuals are always pushed.
-///   - Zeroes Force on that player's "protected" actual walker if desired.
+///
+/// NEW:
+///   - Uses ActualParticleMetaElement.Age and ActualParticlePoolSystem.ScanLockDuration
+///   - If Age < ScanLockDuration, that actual is ignored for highlighting/scanning.
 /// </summary>
 [WorldSystemFilter(WorldSystemFilterFlags.Default)]
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [UpdateAfter(typeof(LangevinWalkSystem))]
-
 public partial struct MeasurementSystem : ISystem
 {
     EntityQuery _walkersQ;
@@ -46,7 +48,8 @@ public partial struct MeasurementSystem : ISystem
         _cfgQ = state.GetEntityQuery(
             ComponentType.ReadOnly<ActualParticleSet>(),
             ComponentType.ReadOnly<ActualParticleRef>(),
-            ComponentType.ReadOnly<ActualParticlePositionElement>());
+            ComponentType.ReadOnly<ActualParticlePositionElement>(),
+            ComponentType.ReadOnly<ActualParticleMetaElement>()); // NEW
 
         _reqP1Q = state.GetEntityQuery(ComponentType.ReadOnly<ClickRequest>());
         _reqP2Q = state.GetEntityQuery(ComponentType.ReadOnly<ClickRequestP2>());
@@ -101,6 +104,7 @@ public partial struct MeasurementSystem : ISystem
 
         var posBuf = em.GetBuffer<ActualParticlePositionElement>(cfgEnt);
         var refBuf = em.GetBuffer<ActualParticleRef>(cfgEnt);
+        var metaBuf = em.GetBuffer<ActualParticleMetaElement>(cfgEnt); // NEW
 
         // Process Player 1
         if (!_resP1Q.IsEmptyIgnoreFilter)
@@ -125,6 +129,7 @@ public partial struct MeasurementSystem : ISystem
                     N,
                     posBuf,
                     refBuf,
+                    metaBuf,
                     isP2: false);
             }
         }
@@ -152,6 +157,7 @@ public partial struct MeasurementSystem : ISystem
                     N,
                     posBuf,
                     refBuf,
+                    metaBuf,
                     isP2: true);
             }
         }
@@ -166,6 +172,7 @@ public partial struct MeasurementSystem : ISystem
         int N,
         DynamicBuffer<ActualParticlePositionElement> posBuf,
         DynamicBuffer<ActualParticleRef> refBuf,
+        DynamicBuffer<ActualParticleMetaElement> metaBuf, // NEW
         bool isP2)
     {
         var em = state.EntityManager;
@@ -174,7 +181,7 @@ public partial struct MeasurementSystem : ISystem
         float R = math.max(1e-6f, req.Radius);
         float R2 = R * R;
 
-        // ---------------- Highlight radius (for selecting closest actual) ----------------
+        // Highlight radius (for selecting closest actual)
         float exclMul = math.max(0f, req.ExclusionRadiusMultiplier);
         float highlightR = (exclMul > 0f) ? R * exclMul : R;
         float highlightR2 = highlightR * highlightR;
@@ -183,10 +190,21 @@ public partial struct MeasurementSystem : ISystem
         float closestD2 = float.MaxValue;
         float2 closestPos = float2.zero;
 
+        float scanLock = ActualParticlePoolSystem.ScanLockDuration;
+
         if (highlightR > 0f && posBuf.Length > 0)
         {
-            for (int i = 0; i < posBuf.Length; i++)
+            int len = math.min(posBuf.Length, math.min(refBuf.Length, metaBuf.Length));
+            for (int i = 0; i < len; i++)
             {
+                // ignore inactive slots
+                if (refBuf[i].Walker == Entity.Null)
+                    continue;
+
+                // NEW: ignore very young actuals (still invisible or fading in)
+                if (metaBuf[i].Age < scanLock)
+                    continue;
+
                 float2 p = posBuf[i].Value;
                 float2 d = p - c;
                 float d2 = math.lengthsq(d);
@@ -226,7 +244,7 @@ public partial struct MeasurementSystem : ISystem
             hasClosestActual = true;
         }
 
-        // ---------------- While pressed: suction/blow (two-zone) ----------------
+        // While pressed: suction/blow (two-zone)
         if (req.IsPressed && strengthOuter != 0f)
         {
             var job = new PushJob
@@ -244,7 +262,7 @@ public partial struct MeasurementSystem : ISystem
             state.Dependency = job.ScheduleParallel(state.Dependency);
         }
 
-        // ---------------- On release: outward pulse, also compute probability ----------------
+        // On release: outward pulse, also compute probability
         if (req.EdgeUp)
         {
             var push = new PushJob
@@ -252,7 +270,7 @@ public partial struct MeasurementSystem : ISystem
                 Center = c,
                 OuterR2 = R2,
                 InnerR2 = innerR2,
-                StrengthOuter = math.abs(strengthOuter),   // you can tune sign if desired
+                StrengthOuter = math.abs(strengthOuter),
                 StrengthInner = strengthInner,
                 EdgeSoft = 1.0f,
                 ClosestActualEntity = closestActualEntity,
@@ -279,18 +297,8 @@ public partial struct MeasurementSystem : ISystem
             result.ProbabilityLast = p;
             em.SetComponentData(resultEnt, result);
 
-            Debug.Log($"[Measure {(isP2 ? "P2" : "P1")}] p≈{Round3(p)} @ {c}");
+            //Debug.Log($"[Measure {(isP2 ? "P2" : "P1")}] p≈{Round3(p)} @ {c}");
         }
-
-        //// ---------------- Optional: zero this player's closest actual force ----------------
-        //if (hasClosestActual)
-        //{
-        //    var zeroJob = new ZeroForceActualJob
-        //    {
-        //        ActualEntity = closestActualEntity
-        //    };
-        //    state.Dependency = zeroJob.ScheduleParallel(state.Dependency);
-        //}
     }
 
     // ---------------- Player 2 version ----------------
@@ -302,6 +310,7 @@ public partial struct MeasurementSystem : ISystem
         int N,
         DynamicBuffer<ActualParticlePositionElement> posBuf,
         DynamicBuffer<ActualParticleRef> refBuf,
+        DynamicBuffer<ActualParticleMetaElement> metaBuf, // NEW
         bool isP2)
     {
         var em = state.EntityManager;
@@ -318,10 +327,19 @@ public partial struct MeasurementSystem : ISystem
         float closestD2 = float.MaxValue;
         float2 closestPos = float2.zero;
 
+        float scanLock = ActualParticlePoolSystem.ScanLockDuration;
+
         if (highlightR > 0f && posBuf.Length > 0)
         {
-            for (int i = 0; i < posBuf.Length; i++)
+            int len = math.min(posBuf.Length, math.min(refBuf.Length, metaBuf.Length));
+            for (int i = 0; i < len; i++)
             {
+                if (refBuf[i].Walker == Entity.Null)
+                    continue;
+
+                if (metaBuf[i].Age < scanLock)
+                    continue;
+
                 float2 p = posBuf[i].Value;
                 float2 d = p - c;
                 float d2 = math.lengthsq(d);
@@ -409,17 +427,8 @@ public partial struct MeasurementSystem : ISystem
             result.ProbabilityLast = p;
             em.SetComponentData(resultEnt, result);
 
-            Debug.Log($"[Measure {(isP2 ? "P2" : "P1")}] p≈{Round3(p)} @ {c}");
+            //Debug.Log($"[Measure {(isP2 ? "P2" : "P1")}] p≈{Round3(p)} @ {c}");
         }
-
-        //if (hasClosestActual)
-        //{
-        //    var zeroJob = new ZeroForceActualJob
-        //    {
-        //        ActualEntity = closestActualEntity
-        //    };
-        //    state.Dependency = zeroJob.ScheduleParallel(state.Dependency);
-        //}
     }
 
     static float Round3(float v) => math.round(v * 1000f) * 0.001f;
@@ -431,7 +440,7 @@ public partial struct MeasurementSystem : ISystem
         {
             var e = q.GetSingletonEntity();
             var r = em.GetComponentData<T>(e);
-            // Currently a no-op; you can zero fields here if needed.
+            // no-op for now
         }
     }
 
@@ -530,21 +539,6 @@ public partial struct MeasurementSystem : ISystem
             if (math.lengthsq(pos.Value - Center) <= R2)
             {
                 Counter[0] = Counter[0] + 1;
-            }
-        }
-    }
-
-    [BurstCompile]
-    [WithAll(typeof(ParticleTag))]
-    public partial struct ZeroForceActualJob : IJobEntity
-    {
-        public Entity ActualEntity;
-
-        public void Execute(Entity entity, ref Force f)
-        {
-            if (entity == ActualEntity)
-            {
-                f.Value = float2.zero;
             }
         }
     }

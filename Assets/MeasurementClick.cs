@@ -131,6 +131,10 @@ public sealed class MeasurementClick : MonoBehaviour
     [Tooltip("Duration after full co-op scan where inner force is flipped to push.")]
     public float postCoopRepelDuration = 0.2f;
 
+    [Header("Per-player drop window")]
+    [Tooltip("Time window after a scan during which THAT player ignores that actual (used to drop released particles & avoid immediate re-grabs).")]
+    public float spawnScanLockout = 1.0f;
+
     [Header("Debug")]
     public bool logEvents = false;
 
@@ -170,6 +174,16 @@ public sealed class MeasurementClick : MonoBehaviour
     // Post-scan repulsion timers
     float _p1RepelTimer;
     float _p2RepelTimer;
+
+    // Per-player "drop this actual" window: ignore this index for some time
+    int _p1DropIndex = -1;
+    float _p1DropUntilTime;
+    int _p2DropIndex = -1;
+    float _p2DropUntilTime;
+
+    // Track when a player was scanning an identified actual in the previous frame
+    bool _p1WasScanningIdentPrev;
+    bool _p2WasScanningIdentPrev;
 
     void OnEnable()
     {
@@ -320,6 +334,10 @@ public sealed class MeasurementClick : MonoBehaviour
 
             // Start a short repulsion window for P1 to push walkers away
             _p1RepelTimer = Mathf.Max(_p1RepelTimer, postIdentifyRepelDuration);
+
+            // Per-player drop: P1 ignores this index for a short time
+            _p1DropIndex = idx;
+            _p1DropUntilTime = Time.time + spawnScanLockout;
         }
     }
 
@@ -355,6 +373,10 @@ public sealed class MeasurementClick : MonoBehaviour
 
             // Repulsion window for P2
             _p2RepelTimer = Mathf.Max(_p2RepelTimer, postIdentifyRepelDuration);
+
+            // Per-player drop: P2 ignores this index for a short time
+            _p2DropIndex = idx;
+            _p2DropUntilTime = Time.time + spawnScanLockout;
         }
     }
 
@@ -391,6 +413,13 @@ public sealed class MeasurementClick : MonoBehaviour
             // Start repulsion window for BOTH players (they were both involved in coop)
             _p1RepelTimer = Mathf.Max(_p1RepelTimer, postCoopRepelDuration);
             _p2RepelTimer = Mathf.Max(_p2RepelTimer, postCoopRepelDuration);
+
+            // Both players drop this actual for a short time
+            float dropUntil = Time.time + spawnScanLockout;
+            _p1DropIndex = idx;
+            _p2DropIndex = idx;
+            _p1DropUntilTime = dropUntil;
+            _p2DropUntilTime = dropUntil;
         }
     }
 
@@ -575,11 +604,49 @@ public sealed class MeasurementClick : MonoBehaviour
         }
 
         // =========================================================
+        // 3.5) Per-player drop windows
+        // =========================================================
+        float now = Time.time;
+
+        bool p1Dropping = _p1DropIndex >= 0 && now < _p1DropUntilTime;
+        bool p2Dropping = _p2DropIndex >= 0 && now < _p2DropUntilTime;
+
+        if (p1Dropping && hasActualInsideP1 && idxP1 == _p1DropIndex)
+        {
+            hasActualInsideP1 = false;
+            isIdentifiedP1 = false;
+        }
+
+        if (p2Dropping && hasActualInsideP2 && idxP2 == _p2DropIndex)
+        {
+            hasActualInsideP2 = false;
+            isIdentifiedP2 = false;
+        }
+
+        if (_p1DropIndex >= 0 && now >= _p1DropUntilTime)
+            _p1DropIndex = -1;
+        if (_p2DropIndex >= 0 && now >= _p2DropUntilTime)
+            _p2DropIndex = -1;
+
+        // =========================================================
         // 4) Determine per-actual holders, near-holder shrink, assisting and disruption
         // =========================================================
 
         bool p1ScanningIdent = p1Available && pressedP1 && hasActualInsideP1 && isIdentifiedP1 && idxP1 >= 0;
         bool p2ScanningIdent = p2Available && pressedP2 && hasActualInsideP2 && isIdentifiedP2 && idxP2 >= 0;
+
+        // --- Holder reset on release ---
+        if (edgeUpP1 && _p1WasScanningIdentPrev && idxP1 >= 0)
+        {
+            if (_actualHolderIndexToPlayer.TryGetValue(idxP1, out int holderP1) && holderP1 == 1)
+                _actualHolderIndexToPlayer.Remove(idxP1);
+        }
+
+        if (edgeUpP2 && _p2WasScanningIdentPrev && idxP2 >= 0)
+        {
+            if (_actualHolderIndexToPlayer.TryGetValue(idxP2, out int holderP2) && holderP2 == 2)
+                _actualHolderIndexToPlayer.Remove(idxP2);
+        }
 
         int holderForIdxP1 = 0;
         int holderForIdxP2 = 0;
@@ -636,7 +703,7 @@ public sealed class MeasurementClick : MonoBehaviour
             p2IsHolder = false;
         }
 
-        // --- Near-holder shrink: purely cursor-to-cursor distance to a holder ---
+        // --- Near-holder shrink ---
         bool p1NearHolder = false;
         bool p2NearHolder = false;
 
@@ -670,7 +737,6 @@ public sealed class MeasurementClick : MonoBehaviour
         float p1RadiusScale = 1f;
         float p2RadiusScale = 1f;
 
-        // While repelling, we do NOT grow/shrink the cursor radius
         if (!p1RepelActive)
         {
             if (p1IsHolder)
@@ -690,9 +756,14 @@ public sealed class MeasurementClick : MonoBehaviour
         float coopMinClamp = -1.5f * Mathf.PI;
         float halfClamp = -0.5f * Mathf.PI;
 
+        // Just-started flags
+        bool p1JustStartedIdent = p1ScanningIdent && !_p1WasScanningIdentPrev;
+        bool p2JustStartedIdent = p2ScanningIdent && !_p2WasScanningIdentPrev;
+
         // --- Player 1 visuals ---
         if (p1Available && Cursor1 != null && Progress1 != null)
         {
+            // Always lerp toward the appropriate radius scale
             Cursor1.Radius = Mathf.Lerp(
                 Cursor1.Radius,
                 _cursor1BaseRadius * p1RadiusScale,
@@ -704,6 +775,13 @@ public sealed class MeasurementClick : MonoBehaviour
                 radiusLerpSpeed * Time.deltaTime
             );
 
+            // Snap the progress arc to halfway on first grab of an identified actual
+            if (p1JustStartedIdent && isIdentifiedP1)
+            {
+                Progress1.AngRadiansEnd = halfClamp;
+                Cursor1.AngRadiansStart = halfClamp;
+            }
+
             if (pressedP1)
             {
                 Cursor1.DashType = Shapes.DashType.Angled;
@@ -711,7 +789,7 @@ public sealed class MeasurementClick : MonoBehaviour
                 Cursor1.DashSpacing = 2.5f;
                 Cursor1.Thickness = 2 * Mathf.PI;
 
-                Cursor1.DashOffset = (Cursor1.DashOffset + RotationSpeed * Time.deltaTime) % 1000000f;
+                Cursor1.DashOffset = (Cursor1.DashOffset + RotationSpeed * Time.deltaTime) % 1_000_000f;
 
                 if (hasActualInsideP1)
                 {
@@ -793,7 +871,7 @@ public sealed class MeasurementClick : MonoBehaviour
                 Cursor1.DashSpacing = 3f;
                 Cursor1.Thickness = 5f;
 
-                Cursor1.DashOffset = (Cursor1.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1000000f;
+                Cursor1.DashOffset = (Cursor1.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1_000_000f;
 
                 // When not pressed, allow full decay over the whole circle
                 Progress1.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
@@ -807,6 +885,7 @@ public sealed class MeasurementClick : MonoBehaviour
         // --- Player 2 visuals ---
         if (p2Available && Cursor2 != null && Progress2 != null)
         {
+            // Always lerp toward the appropriate radius scale
             Cursor2.Radius = Mathf.Lerp(
                 Cursor2.Radius,
                 _cursor2BaseRadius * p2RadiusScale,
@@ -818,6 +897,13 @@ public sealed class MeasurementClick : MonoBehaviour
                 radiusLerpSpeed * Time.deltaTime
             );
 
+            // Snap progress arc when first grabbing an already-identified actual
+            if (p2JustStartedIdent && isIdentifiedP2)
+            {
+                Progress2.AngRadiansEnd = halfClamp;
+                Cursor2.AngRadiansStart = halfClamp;
+            }
+
             if (pressedP2)
             {
                 Cursor2.DashType = Shapes.DashType.Angled;
@@ -825,7 +911,7 @@ public sealed class MeasurementClick : MonoBehaviour
                 Cursor2.DashSpacing = 2.5f;
                 Cursor2.Thickness = 2 * Mathf.PI;
 
-                Cursor2.DashOffset = (Cursor2.DashOffset + RotationSpeed * Time.deltaTime) % 1000000f;
+                Cursor2.DashOffset = (Cursor2.DashOffset + RotationSpeed * Time.deltaTime) % 1_000_000f;
 
                 if (hasActualInsideP2)
                 {
@@ -882,7 +968,7 @@ public sealed class MeasurementClick : MonoBehaviour
                 Cursor2.DashSpacing = 3f;
                 Cursor2.Thickness = 5f;
 
-                Cursor2.DashOffset = (Cursor2.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1000000f;
+                Cursor2.DashOffset = (Cursor2.DashOffset + 0.1f * RotationSpeed * Time.deltaTime) % 1_000_000f;
 
                 Progress2.AngRadiansEnd += Time.deltaTime * 8f * progressSpeed;
                 Progress2.AngRadiansEnd = Mathf.Clamp(Progress2.AngRadiansEnd, coopMinClamp, 0.5f * Mathf.PI);
@@ -905,7 +991,6 @@ public sealed class MeasurementClick : MonoBehaviour
             float pushP1 = pushStrength;
             float innerPushP1 = innerPushStrength;
 
-            // While repelling, do NOT grow/shrink radii
             if (!p1RepelActive)
             {
                 if (p1IsHolder)
@@ -926,14 +1011,12 @@ public sealed class MeasurementClick : MonoBehaviour
                 }
                 else if (p1NearHolder || p1Disrupted)
                 {
-                    // Hovering near holder or disrupted: match small UI radius
                     radiusP1 *= assistRadiusMultiplier;
                     innerRadiusP1 *= assistRadiusMultiplier;
                     exclMulP1 *= assistRadiusMultiplier;
                 }
             }
 
-            // Post-scan repulsion: flip inner force to push while timer active
             if (_p1RepelTimer > 0f)
             {
                 innerPushP1 = Mathf.Abs(innerPushStrength); // ensure outward
@@ -957,7 +1040,9 @@ public sealed class MeasurementClick : MonoBehaviour
             {
                 Debug.Log($"[Click P1] pressed={pressedP1} down={edgeDownP1} up={edgeUpP1} " +
                           $"world={worldP1} R={radiusP1} outerPush={pushP1} innerR={innerRadiusP1} innerPush={innerPushP1} " +
-                          $"holder={p1IsHolder} assisting={p1Assisting} nearHolder={p1NearHolder} disrupted={p1Disrupted} repelTimer={_p1RepelTimer}");
+                          $"holder={p1IsHolder} assisting={p1Assisting} nearHolder={p1NearHolder} disrupted={p1Disrupted} " +
+                          $"repelTimer={_p1RepelTimer} dropping={(p1Dropping ? _p1DropIndex : -1)} " +
+                          $"justStartedIdent={p1JustStartedIdent}");
             }
 
             _prevPressedP1 = pressedP1;
@@ -1020,11 +1105,17 @@ public sealed class MeasurementClick : MonoBehaviour
             {
                 Debug.Log($"[Click P2] pressed={pressedP2} down={edgeDownP2} up={edgeUpP2} " +
                           $"world={worldP2} R={radiusP2} outerPush={pushP2} innerR={innerRadiusP2} innerPush={innerPushP2} " +
-                          $"holder={p2IsHolder} assisting={p2Assisting} nearHolder={p2NearHolder} disrupted={p2Disrupted} repelTimer={_p2RepelTimer}");
+                          $"holder={p2IsHolder} assisting={p2Assisting} nearHolder={p2NearHolder} disrupted={p2Disrupted} " +
+                          $"repelTimer={_p2RepelTimer} dropping={(p2Dropping ? _p2DropIndex : -1)} " +
+                          $"justStartedIdent={p2JustStartedIdent}");
             }
 
             _prevPressedP2 = pressedP2;
         }
+
+        // Store for next frame
+        _p1WasScanningIdentPrev = p1ScanningIdent;
+        _p2WasScanningIdentPrev = p2ScanningIdent;
     }
 
     // ------------------------------------------------------------

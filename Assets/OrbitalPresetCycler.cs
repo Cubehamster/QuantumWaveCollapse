@@ -1,5 +1,4 @@
-﻿// OrbitalPresetCycler.cs
-using UnityEngine;
+﻿using UnityEngine;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Collections;
@@ -85,8 +84,17 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
     InputAction _prevAction;
     InputAction _nextAction;
 
+    // Random-cycle tracking: which orbitals have already been visited
+    // (by either keyboard or spawn-triggered changes) in the current cycle.
+    bool[] _seenRandom;
+
+    // Global instance so ECS systems can ask for random steps.
+    public static OrbitalPresetCycler Instance { get; private set; }
+
     void OnEnable()
     {
+        Instance = this;
+
         // Build input first (so keys work the moment we’re ready)
         _prevAction = new InputAction("PrevPreset", InputActionType.Button);
         _nextAction = new InputAction("NextPreset", InputActionType.Button);
@@ -120,6 +128,16 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
             if (op.Kind == kOrder[i] || op.Type == kOrder[i]) { _idx = i; break; }
         }
 
+        // Init seen array and mark the current one as seen.
+        if (_seenRandom == null || _seenRandom.Length != kOrder.Length)
+            _seenRandom = new bool[kOrder.Length];
+
+        for (int i = 0; i < _seenRandom.Length; i++)
+            _seenRandom[i] = false;
+
+        if (_idx >= 0 && _idx < _seenRandom.Length)
+            _seenRandom[_idx] = true;
+
         _ready = true;
         Debug.Log("[OrbitalPresetCycler] Ready. Use Left/Right (or A/D) to switch orbitals.");
     }
@@ -133,6 +151,9 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
 
     void OnDisable()
     {
+        if (Instance == this)
+            Instance = null;
+
         _prevAction?.Disable();
         _nextAction?.Disable();
         _prevAction?.Dispose();
@@ -151,15 +172,16 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         return arr[0];
     }
 
-    void Step(int dir)
+    // Core apply function used by both keyboard stepping and random stepping
+    void ApplyIndex(int newIndex, bool markSeenRandom)
     {
         if (_orbQ.IsEmptyIgnoreFilter) return;
 
+        _idx = (newIndex % kOrder.Length + kOrder.Length) % kOrder.Length;
+        var kind = kOrder[_idx];
+
         var e = GetOrbitalEntity();
         var op = _em.GetComponentData<OrbitalParams2D>(e);
-
-        _idx = (_idx + dir + kOrder.Length) % kOrder.Length;
-        var kind = kOrder[_idx];
 
         op.Kind = kind;
         op.Type = kind;       // keep alias in sync
@@ -175,6 +197,80 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         }
 
         _em.SetComponentData(e, op);
+
+        if (markSeenRandom)
+        {
+            if (_seenRandom == null || _seenRandom.Length != kOrder.Length)
+                _seenRandom = new bool[kOrder.Length];
+
+            if (_idx >= 0 && _idx < _seenRandom.Length)
+                _seenRandom[_idx] = true;
+        }
+
         Debug.Log($"[OrbitalPresetCycler] Kind={kind}  A0={op.A0:0.##}  Angle={math.degrees(op.Angle):0.#}°");
+    }
+
+    void Step(int dir)
+    {
+        if (!_ready) return;
+
+        int newIndex = _idx + dir;
+        ApplyIndex(newIndex, markSeenRandom: true);
+    }
+
+    // Called by ActualParticlePoolSystem every time we've spawned N actuals.
+    public void StepRandomFromSpawn()
+    {
+        if (!_ready) return;
+
+        if (_seenRandom == null || _seenRandom.Length != kOrder.Length)
+            _seenRandom = new bool[kOrder.Length];
+
+        int total = kOrder.Length;
+
+        // Build candidate list of unseen orbitals
+        int[] candidates = new int[total];
+        int candidateCount = 0;
+
+        for (int i = 0; i < total; i++)
+        {
+            if (!_seenRandom[i])
+            {
+                candidates[candidateCount++] = i;
+            }
+        }
+
+        // If we've seen them all, reset the cycle but keep current as seen
+        if (candidateCount == 0)
+        {
+            for (int i = 0; i < total; i++)
+                _seenRandom[i] = false;
+
+            if (_idx >= 0 && _idx < total)
+                _seenRandom[_idx] = true;
+
+            // Rebuild candidate list
+            candidateCount = 0;
+            for (int i = 0; i < total; i++)
+            {
+                if (!_seenRandom[i])
+                    candidates[candidateCount++] = i;
+            }
+        }
+
+        if (candidateCount == 0)
+            return; // safety
+
+        int pick = UnityEngine.Random.Range(0, candidateCount);
+        int newIndex = candidates[pick];
+
+        ApplyIndex(newIndex, markSeenRandom: true);
+    }
+
+    // Static API for ECS
+    public static void RequestRandomStepFromSpawns()
+    {
+        if (Instance != null)
+            Instance.StepRandomFromSpawn();
     }
 }

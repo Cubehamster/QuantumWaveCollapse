@@ -220,7 +220,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 44c14d379cddcb544a93e06edf07481b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  desiredCount: 6
+  desiredActiveCount: 2
+  poolSize: 40
   seed: 12345
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

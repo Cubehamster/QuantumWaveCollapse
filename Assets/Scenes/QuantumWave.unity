@@ -758,8 +758,9 @@ MonoBehaviour:
   holderRadiusMultiplier: 2
   assistRadiusMultiplier: 0.8
   holderInnerStrengthMultiplier: 0.5
-  postIdentifyRepelDuration: 0.5
-  postCoopRepelDuration: 0.5
+  postIdentifyRepelDuration: 0.2
+  postCoopRepelDuration: 0.2
+  spawnScanLockout: 1
   logEvents: 0
   mode: 0
 --- !u!114 &448779960
@@ -783,6 +784,8 @@ MonoBehaviour:
   highlightSizeMultiplier: 1.3
   visible: 1
   maxDots: 0
+  invisibleDuration: 0.5
+  fadeDuration: 0.5
 --- !u!114 &448779961
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1167,7 +1170,7 @@ RectTransform:
   m_GameObject: {fileID: 1105114897}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: -2}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: -1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1173249794}
@@ -1179,6 +1182,51 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &1118114439
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1118114441}
+  - component: {fileID: 1118114440}
+  m_Layer: 0
+  m_Name: SquadController
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1118114440
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1118114439}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: deb4a8fd7836dfd408a136e6e884452e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  startStage: 0
+--- !u!4 &1118114441
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1118114439}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -4.51541, y: -1.6863, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1173249793
 GameObject:
   m_ObjectHideFlags: 0
@@ -1425,6 +1473,54 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1433680407
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1433680409}
+  - component: {fileID: 1433680408}
+  m_Layer: 0
+  m_Name: MQTT
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1433680408
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1433680407}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d95dafddb5bd4394c97e222532304fe2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  brokerIp: 10.0.0.10
+  brokerPort: 1883
+  deviceId: squid-ctrl
+  version: 1.0.0
+--- !u!4 &1433680409
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1433680407}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -4.51541, y: -1.6863, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -2102,7 +2198,7 @@ MonoBehaviour:
     size: 2
     spacing: 3
     offset: 0
-    shapeModifier: -1
+    shapeModifier: 1
 --- !u!114 &2044266457
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2167,3 +2263,5 @@ SceneRoots:
   - {fileID: 102119720}
   - {fileID: 396053714}
   - {fileID: 656559284}
+  - {fileID: 1433680409}
+  - {fileID: 1118114441}

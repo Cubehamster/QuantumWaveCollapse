@@ -38,6 +38,7 @@ public sealed class ActualParticlesAuthoring : MonoBehaviour
             AddBuffer<ActualParticleRef>(e);
             AddBuffer<ActualParticlePositionElement>(e);
             AddBuffer<ActualParticleStatusElement>(e);
+            AddBuffer<ActualParticleMetaElement>(e);
         }
     }
 }

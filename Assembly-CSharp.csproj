@@ -97,6 +97,7 @@
     <Compile Include="Assets\ActualParticle.cs" />
     <Compile Include="Assets\CollapseAttractorSystem.cs" />
     <Compile Include="Assets\EnsureVelocitySystem.cs" />
+    <Compile Include="Assets\SquidGameController.cs" />
     <Compile Include="Assets\ActualParticleDotUI.cs" />
     <Compile Include="Assets\Particles.SpawnerAuthoring.cs" />
     <Compile Include="Assets\CollapseAttractor.cs" />
@@ -104,6 +105,7 @@
     <Compile Include="Assets\MouseToClickRequest.cs" />
     <Compile Include="Assets\TutorialInfo\Scripts\Readme.cs" />
     <Compile Include="Assets\OrbitalAuthoring.cs" />
+    <Compile Include="Assets\SquidMqttClient.cs" />
     <Compile Include="Assets\Particles.SpawnSystem.cs" />
     <Compile Include="Assets\OrbitalPresetCycler.cs" />
     <Compile Include="Assets\MeasurementVisualState.cs" />
@@ -114,6 +116,7 @@
     <Compile Include="Assets\Particles.RandomState.cs" />
     <Compile Include="Assets\DensityField2DAuthoring.cs" />
     <Compile Include="Assets\DensityPresenterSimple.cs" />
+    <Compile Include="Assets\QuantumMessage.cs" />
     <Compile Include="Assets\MeasurementRequest.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -197,6 +200,7 @@
     <None Include="Assets\Shapes\Shaders\Generated Shaders\Resources\Polyline 2D LinearBurn.shader" />
     <None Include="Assets\Shapes\Shaders\Generated Shaders\Resources\Disc Transparent.shader" />
     <None Include="Assets\Shapes\Shaders\Core\Rect Core.cginc" />
+    <None Include="Assets\Packages\MQTTnet.4.3.7.1207\lib\netstandard2.1\MQTTnet.xml" />
     <None Include="Assets\Shapes\Shaders\Core\Triangle Core.cginc" />
     <None Include="Assets\Shapes\Shaders\Generated Shaders\Resources\Sphere Lighten.shader" />
     <None Include="Assets\Shapes\Shaders\Generated Shaders\Resources\Line 2D Additive.shader" />
@@ -243,6 +247,7 @@
     <None Include="Assets\Shapes\Shaders\Core\Line 2D Core.cginc" />
     <None Include="Assets\Shapes\Shaders\Core\Quad Core.cginc" />
     <None Include="Assets\Shapes\Textures\Inconsolata\OFL.txt" />
+    <None Include="Assets\Packages\MQTTnet.4.3.7.1207\lib\netstandard2.1\MQTTnet.dll" />
     <None Include="Assets\Shapes\Shaders\Generated Shaders\Resources\Disc Additive.shader" />
     <None Include="Assets\TextMesh Pro\Resources\LineBreaking Following Characters.txt" />
     <None Include="Assets\Shapes\Shaders\Generated Shaders\Resources\Disc Screen.shader" />
@@ -810,6 +815,14 @@
     </Reference>
     <Reference Include="System.Runtime.CompilerServices.Unsafe">
       <HintPath>Library\PackageCache\com.unity.collections@d49facba0036\Unity.Collections.Tests\System.Runtime.CompilerServices.Unsafe\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>Library\PackageCache\com.unity.nuget.newtonsoft-json@4dfd81071c64\Runtime\Newtonsoft.Json.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="MQTTnet">
+      <HintPath>Assets\Packages\MQTTnet.4.3.7.1207\lib\netstandard2.1\MQTTnet.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Unity.Android.Types">

@@ -5,6 +5,15 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 
+/// <summary>
+/// Per-slot metadata for Actual particles.
+/// Age = seconds since the slot became active with a non-null Walker.
+/// </summary>
+public struct ActualParticleMetaElement : IBufferElementData
+{
+    public float Age;
+}
+
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 public partial struct ActualParticlePoolSystem : ISystem
 {
@@ -24,11 +33,23 @@ public partial struct ActualParticlePoolSystem : ISystem
     public static float SpawnCooldownDuration = 0.2f;
     static float s_SpawnCooldown;
 
-    // --- Public counters (active actuals only) ---
+    // --- Fade / scan lock timings (seconds) ---
+    // These are used by BOTH UI and MeasurementSystem.
+    // New / reused slots:
+    //   - Age < InvisibleDelay      -> fully invisible, not scannable
+    //   - InvisibleDelay–FadeInEnd  -> fade-in alpha, still not scannable
+    //   - Age >= ScanLockDuration   -> fully visible & scannable
+    public static float InvisibleDelay = 0.5f;
+    public static float FadeInDuration = 0.5f;
+    public static float ScanLockDuration => InvisibleDelay + FadeInDuration;
+
+    // --- Public counters (status counts across the pool) ---
     public static int CurrentUnknown;
     public static int CurrentGood;
     public static int CurrentBad;
-    public static int Total = 0;
+
+    // --- Orbital cycling based on spawns ---
+    static int s_SpawnedSinceLastOrbit;
 
     /// <summary>
     /// Call when an actual just got identified (Unknown -> Good/Bad).
@@ -78,7 +99,8 @@ public partial struct ActualParticlePoolSystem : ISystem
             ComponentType.ReadWrite<ActualParticleRng>(),
             ComponentType.ReadWrite<ActualParticleRef>(),
             ComponentType.ReadWrite<ActualParticlePositionElement>(),
-            ComponentType.ReadWrite<ActualParticleStatusElement>());
+            ComponentType.ReadWrite<ActualParticleStatusElement>(),
+            ComponentType.ReadWrite<ActualParticleMetaElement>());
 
         _walkersQ = state.GetEntityQuery(
             ComponentType.ReadOnly<ParticleTag>(),
@@ -115,10 +137,10 @@ public partial struct ActualParticlePoolSystem : ISystem
 
         var set = em.GetComponentData<ActualParticleSet>(cfgEnt);
         var rng = em.GetComponentData<ActualParticleRng>(cfgEnt);
-
         var refBuf = em.GetBuffer<ActualParticleRef>(cfgEnt);
         var posBuf = em.GetBuffer<ActualParticlePositionElement>(cfgEnt);
         var statusBuf = em.GetBuffer<ActualParticleStatusElement>(cfgEnt);
+        var metaBuf = em.GetBuffer<ActualParticleMetaElement>(cfgEnt);
 
         // ---------------------------------------------------------
         // Ensure pool size & buffer lengths
@@ -133,12 +155,14 @@ public partial struct ActualParticlePoolSystem : ISystem
             refBuf.ResizeUninitialized(poolSize);
             posBuf.ResizeUninitialized(poolSize);
             statusBuf.ResizeUninitialized(poolSize);
+            metaBuf.ResizeUninitialized(poolSize);
 
             for (int i = oldLen; i < poolSize; i++)
             {
                 refBuf[i] = new ActualParticleRef { Walker = Entity.Null };
                 posBuf[i] = new ActualParticlePositionElement { Value = float2.zero };
                 statusBuf[i] = new ActualParticleStatusElement { Value = ActualParticleStatus.Unknown };
+                metaBuf[i] = new ActualParticleMetaElement { Age = 0f };
             }
         }
 
@@ -150,7 +174,6 @@ public partial struct ActualParticlePoolSystem : ISystem
             int initial = math.clamp(set.DesiredCount, 0, poolSize);
             s_PendingSpawnCount += initial;
             _didInitialSpawn = true;
-            Total += initial;
         }
 
         // ---------------------------------------------------------
@@ -165,10 +188,11 @@ public partial struct ActualParticlePoolSystem : ISystem
                 if (idx < 0 || idx >= refBuf.Length)
                     continue;
 
-                // Free this slot & reset its status to Unknown
+                // Free this slot & reset its status/meta
                 refBuf[idx] = new ActualParticleRef { Walker = Entity.Null };
                 posBuf[idx] = new ActualParticlePositionElement { Value = float2.zero };
                 statusBuf[idx] = new ActualParticleStatusElement { Value = ActualParticleStatus.Unknown };
+                metaBuf[idx] = new ActualParticleMetaElement { Age = 0f };
             }
 
             s_ReturnRequests.Clear();
@@ -177,10 +201,11 @@ public partial struct ActualParticlePoolSystem : ISystem
         // ---------------------------------------------------------
         // Spawn requested number of new Unknown actuals (after cooldown)
         // ---------------------------------------------------------
+        int spawnedThisFrame = 0;
+
         if (s_PendingSpawnCount > 0 && s_SpawnCooldown <= 0f)
         {
             using var walkers = _walkersQ.ToEntityArray(Allocator.Temp);
-            Total++;
 
             if (walkers.Length > 0)
             {
@@ -192,7 +217,6 @@ public partial struct ActualParticlePoolSystem : ISystem
                         used.Add(refBuf[i].Walker);
                 }
 
-                int spawned = 0;
                 int maxToSpawn = s_PendingSpawnCount;
 
                 for (int s = 0; s < maxToSpawn; s++)
@@ -213,51 +237,82 @@ public partial struct ActualParticlePoolSystem : ISystem
                     {
                         Value = ActualParticleStatus.Unknown
                     };
-                    // posBuf[freeSlot] will be updated by your position sync system
+                    // Position will be synced by your position system.
+                    metaBuf[freeSlot] = new ActualParticleMetaElement
+                    {
+                        Age = 0f // start invisible, then fade in
+                    };
 
                     used.Add(chosen);
-                    spawned++;
+                    spawnedThisFrame++;
                 }
 
                 used.Dispose();
 
-                s_PendingSpawnCount -= spawned;
+                s_PendingSpawnCount -= spawnedThisFrame;
                 if (s_PendingSpawnCount < 0)
                     s_PendingSpawnCount = 0;
             }
         }
 
         // ---------------------------------------------------------
-        // Count active actuals by status (public counters)
+        // Trigger orbital changes based on spawn count
+        // ---------------------------------------------------------
+        if (spawnedThisFrame > 0)
+        {
+            s_SpawnedSinceLastOrbit += spawnedThisFrame;
+
+            // Every 5 spawned Actuals → random new orbital (unseen in current cycle)
+            if (s_SpawnedSinceLastOrbit >= 5)
+            {
+                s_SpawnedSinceLastOrbit = 0;
+                OrbitalPresetCycler.RequestRandomStepFromSpawns();
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Advance per-slot Age for *active* slots
+        // ---------------------------------------------------------
+        for (int i = 0; i < refBuf.Length && i < metaBuf.Length; i++)
+        {
+            if (refBuf[i].Walker != Entity.Null)
+            {
+                var m = metaBuf[i];
+                m.Age += dt;
+                metaBuf[i] = m;
+            }
+            else
+            {
+                // Inactive slot; keep Age at 0 so next spawn starts clean.
+                metaBuf[i] = new ActualParticleMetaElement { Age = 0f };
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Count active slots + per-status counts
         // ---------------------------------------------------------
         int activeCount = 0;
         int unk = 0, good = 0, bad = 0;
 
         for (int i = 0; i < refBuf.Length; i++)
         {
-            if (refBuf[i].Walker == Entity.Null)
-                continue;
+            if (refBuf[i].Walker != Entity.Null)
+                activeCount++;
+        }
 
-            activeCount++;
-
+        for (int i = 0; i < statusBuf.Length; i++)
+        {
             var st = statusBuf[i].Value;
             switch (st)
             {
-                case ActualParticleStatus.Good:
-                    good++;
-                    break;
-                case ActualParticleStatus.Bad:
-                    bad++;
-                    break;
-                default:
-                    unk++;
-                    break;
+                case ActualParticleStatus.Good: good++; break;
+                case ActualParticleStatus.Bad: bad++; break;
+                default: unk++; break;
             }
         }
 
         set.TargetActive = activeCount;
 
-        // Expose counts
         CurrentUnknown = unk;
         CurrentGood = good;
         CurrentBad = bad;

@@ -634,6 +634,18 @@
       <HintPath>Library\PackageCache\com.unity.collections@d49facba0036\Unity.Collections.Tests\System.Runtime.CompilerServices.Unsafe\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="NuGetForUnity.PluginAPI">
+      <HintPath>Library\PackageCache\com.github-glitchenzo.nugetforunity@ee9526e0fa37\Editor\PluginAPI\NuGetForUnity.PluginAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>Library\PackageCache\com.unity.nuget.newtonsoft-json@4dfd81071c64\Runtime\Newtonsoft.Json.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="MQTTnet">
+      <HintPath>Assets\Packages\MQTTnet.4.3.7.1207\lib\netstandard2.1\MQTTnet.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="Unity.Android.Types">
       <HintPath>C:\Program Files\Unity\Hub\Editor\6000.1.6f1\Editor\Data\PlaybackEngines\AndroidPlayer\Unity.Android.Types.dll</HintPath>
       <Private>False</Private>
