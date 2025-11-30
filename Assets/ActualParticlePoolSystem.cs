@@ -17,6 +17,74 @@ public struct ActualParticleMetaElement : IBufferElementData
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 public partial struct ActualParticlePoolSystem : ISystem
 {
+    // ---------------- Tutorial / controller hooks ----------------
+
+    // Requests from the game controller
+    static bool s_RequestClearAll;
+    static bool s_RequestIntroBadSpawn;
+    static bool s_IntroBadSpawned;
+
+    // Tutorial: suppress extra spawns from NotifyIdentified / NotifyFullyScanned.
+    // SquidGameController toggles these during the teaching section.
+    public static bool s_SuppressIdentifySpawns;
+    public static bool s_SuppressCoopSpawns;
+
+    /// <summary>
+    /// Called by SquidGameController when we want to wipe all active Actuals
+    /// and reset the pool to a blank state (no active walkers).
+    /// </summary>
+    public static void RequestClearAll()
+    {
+        s_RequestClearAll = true;
+        s_PendingSpawnCount = 0;
+        s_SpawnCooldown = 0f;
+
+        // Also clear any pending returns; the system will re-count next frame.
+        if (s_ReturnRequests != null)
+            s_ReturnRequests.Clear();
+    }
+
+    /// <summary>
+    /// Called by SquidGameController when entering an old-style Intro:
+    /// spawn exactly one BAD Actual, attached deterministically to a walker.
+    /// This bypasses the normal Unknown spawn RNG.
+    /// (You may or may not still use this in your new flow.)
+    /// </summary>
+    public static void RequestIntroBadSpawn()
+    {
+        s_RequestIntroBadSpawn = true;
+        s_IntroBadSpawned = false; // allow re-use when Intro is re-entered
+    }
+
+    /// <summary>
+    /// Tutorial hook:
+    /// suppress extra Unknown spawns that would normally come from
+    /// NotifyIdentified (Good -> +1) and NotifyFullyScanned (Good +1, Bad +2).
+    /// 
+    /// - suppressIdentify = true: first Good identify does NOT spawn a new Unknown.
+    /// - suppressCoop = true: coop destroy does NOT spawn new Unknowns either.
+    /// </summary>
+    public static void SetTutorialSpawnSuppression(bool suppressIdentify, bool suppressCoop)
+    {
+        s_SuppressIdentifySpawns = suppressIdentify;
+        s_SuppressCoopSpawns = suppressCoop;
+    }
+
+    /// <summary>
+    /// Tutorial hook: request a number of Unknown spawns that can happen
+    /// IMMEDIATELY (cooldown is bypassed / reset). Used after the countdown
+    /// to spawn the first two gameplay Actuals.
+    /// </summary>
+    public static void RequestImmediateUnknownSpawns(int count)
+    {
+        if (count <= 0) return;
+        s_PendingSpawnCount += count;
+        // ensure they can spawn right away
+        if (s_SpawnCooldown > 0f)
+            s_SpawnCooldown = 0f;
+        CurrentActive += count;
+    }
+
     struct ReturnRequest
     {
         public int Index;
@@ -48,16 +116,24 @@ public partial struct ActualParticlePoolSystem : ISystem
     public static int CurrentGood;
     public static int CurrentBad;
 
+    public static int CurrentActive = 0;
+
     // --- Orbital cycling based on spawns ---
     static int s_SpawnedSinceLastOrbit;
 
     /// <summary>
     /// Call when an actual just got identified (Unknown -> Good/Bad).
-    /// - If isGood == true: spawn +1 new Unknown from the pool (after cooldown).
+    /// - If isGood == true: spawn +1 new Unknown from the pool (after cooldown),
+    ///   unless suppressed by tutorial.
     /// - If isGood == false: no extra spawn here.
     /// </summary>
     public static void NotifyIdentified(int actualIndex, bool isGood)
     {
+        // During tutorial, we may want the first Good identify to NOT spawn
+        // an extra Unknown (so it behaves nicely as a teaching moment).
+        if (s_SuppressIdentifySpawns)
+            return;
+
         if (isGood)
         {
             s_PendingSpawnCount += 1;
@@ -70,6 +146,7 @@ public partial struct ActualParticlePoolSystem : ISystem
     /// - That slot is freed.
     /// - If wasGood: spawn +1 new Unknown.
     /// - If wasBad:  spawn +2 new Unknown.
+    /// Tutorial can suppress these extra spawns via SetTutorialSpawnSuppression.
     /// </summary>
     public static void NotifyFullyScanned(int actualIndex, bool wasGood)
     {
@@ -82,8 +159,17 @@ public partial struct ActualParticlePoolSystem : ISystem
             WasGood = wasGood
         });
 
-        s_PendingSpawnCount += wasGood ? 1 : 2;
-        s_SpawnCooldown = Mathf.Max(s_SpawnCooldown, SpawnCooldownDuration);
+        if(!wasGood)
+            CurrentActive -= 1;
+
+        // During tutorial we usually don't want the final coop destroy to
+        // spawn more Unknowns; the controller will spawn two after the countdown.
+        if (!s_SuppressCoopSpawns)
+        {
+            s_PendingSpawnCount += wasGood ? 0 : 2;
+            s_SpawnCooldown = Mathf.Max(s_SpawnCooldown, SpawnCooldownDuration);
+            CurrentActive += wasGood ? 0 : 2;
+        }
     }
 
     EntityQuery _cfgQ;
@@ -164,6 +250,69 @@ public partial struct ActualParticlePoolSystem : ISystem
                 statusBuf[i] = new ActualParticleStatusElement { Value = ActualParticleStatus.Unknown };
                 metaBuf[i] = new ActualParticleMetaElement { Age = 0f };
             }
+        }
+
+        // ---------------------------------------------------------
+        // Handle "clear all" request from SquidGameController
+        // ---------------------------------------------------------
+        if (s_RequestClearAll)
+        {
+            // Wipe all slots: no active walker, reset position & status.
+            for (int i = 0; i < refBuf.Length; i++)
+            {
+                refBuf[i] = new ActualParticleRef { Walker = Entity.Null };
+                posBuf[i] = new ActualParticlePositionElement { Value = float2.zero };
+                statusBuf[i] = new ActualParticleStatusElement
+                {
+                    Value = ActualParticleStatus.Unknown
+                };
+            }
+
+            // Also zero pending spawns & return requests.
+            s_PendingSpawnCount = 0;
+            if (s_ReturnRequests != null)
+                s_ReturnRequests.Clear();
+
+            s_RequestClearAll = false;
+        }
+
+        // ---------------------------------------------------------
+        // Handle Intro "single BAD actual" spawn request (legacy)
+        // ---------------------------------------------------------
+        if (s_RequestIntroBadSpawn && !s_IntroBadSpawned)
+        {
+            // Try to attach to the first walker (deterministic, no RNG).
+            using var walkers = _walkersQ.ToEntityArray(Allocator.Temp);
+            if (walkers.Length > 0)
+            {
+                int slot = FindFreeSlot(refBuf);
+                if (slot < 0)
+                    slot = 0; // fallback, overwrite first slot
+
+                Entity chosen = walkers[0];
+
+                refBuf[slot] = new ActualParticleRef
+                {
+                    Walker = chosen
+                };
+
+                // Position will be synced by your position system; we can zero for now.
+                posBuf[slot] = new ActualParticlePositionElement
+                {
+                    Value = float2.zero
+                };
+
+                // Mark this one as BAD directly:
+                statusBuf[slot] = new ActualParticleStatusElement
+                {
+                    Value = ActualParticleStatus.Bad
+                };
+
+                s_IntroBadSpawned = true;
+            }
+
+            // Consume request regardless, so we don't spam.
+            s_RequestIntroBadSpawn = false;
         }
 
         // ---------------------------------------------------------

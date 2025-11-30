@@ -79,6 +79,9 @@ public enum ClickMode
 [DisallowMultipleComponent]
 public sealed class MeasurementClick : MonoBehaviour
 {
+    // Global click lock used during tutorial countdown:
+    public static bool ClickLocked = false;
+
     [Header("Camera & plane")]
     public Camera cam;
     [Tooltip("XY plane Z value used for screen->world. 0 is typical for 2D.")]
@@ -184,6 +187,12 @@ public sealed class MeasurementClick : MonoBehaviour
     // Track when a player was scanning an identified actual in the previous frame
     bool _p1WasScanningIdentPrev;
     bool _p2WasScanningIdentPrev;
+
+    // For intro warmup detection: previous cursor positions
+    float2 _prevWorldP1;
+    float2 _prevWorldP2;
+    bool _havePrevWorldP1;
+    bool _havePrevWorldP2;
 
     void OnEnable()
     {
@@ -320,14 +329,31 @@ public sealed class MeasurementClick : MonoBehaviour
 
         if (idx >= 0 && idx < statusBuf.Length)
         {
-            bool isGood = UnityEngine.Random.value > 0.5f;  // your real logic goes here
+            bool isGood = false;
+
+            // Intro/tutorial override: let the controller force Good/Bad when needed
+            var ctrl = SquidGameController.Instance;
+            bool forced = ctrl != null && ctrl.TryConsumeIntroForcedIdentify(out isGood);
+
+            if (!forced)
+            {
+                // Normal game RNG
+                isGood = UnityEngine.Random.value > 0.5f;
+            }
+
             statusBuf[idx] = new ActualParticleStatusElement
             {
                 Value = isGood ? ActualParticleStatus.Good : ActualParticleStatus.Bad
             };
 
-            // Notify pool: Unknown -> Good/Bad (will schedule new Unknown if Good)
+            // Notify pool (spawns etc). Suppression for intro is handled INSIDE the pool.
             ActualParticlePoolSystem.NotifyIdentified(idx, isGood);
+
+            // Tell the controller so the tutorial state machine can advance.
+            if (ctrl != null)
+            {
+                ctrl.OnActualIdentified(idx, isGood);
+            }
 
             // Clear any holder mapping for this index so future holds are clean
             _actualHolderIndexToPlayer.Remove(idx);
@@ -361,13 +387,28 @@ public sealed class MeasurementClick : MonoBehaviour
 
         if (idx >= 0 && idx < statusBuf.Length)
         {
-            bool isGood = UnityEngine.Random.value > 0.5f;  // your real logic goes here
+            bool isGood = false;
+
+            // Intro/tutorial override
+            var ctrl = SquidGameController.Instance;
+            bool forced = ctrl != null && ctrl.TryConsumeIntroForcedIdentify(out isGood);
+
+            if (!forced)
+            {
+                isGood = UnityEngine.Random.value > 0.5f;
+            }
+
             statusBuf[idx] = new ActualParticleStatusElement
             {
                 Value = isGood ? ActualParticleStatus.Good : ActualParticleStatus.Bad
             };
 
             ActualParticlePoolSystem.NotifyIdentified(idx, isGood);
+
+            if (ctrl != null)
+            {
+                ctrl.OnActualIdentified(idx, isGood);
+            }
 
             _actualHolderIndexToPlayer.Remove(idx);
 
@@ -420,35 +461,13 @@ public sealed class MeasurementClick : MonoBehaviour
             _p2DropIndex = idx;
             _p1DropUntilTime = dropUntil;
             _p2DropUntilTime = dropUntil;
-        }
-    }
 
-    void CoopCompleteP2()
-    {
-        // Currently unused to avoid double-spawning; left for future if needed.
-        if (!_haveResultP2 || !_em.Exists(_resultSingletonP2)) return;
-
-        var result = _em.GetComponentData<MeasurementResultP2>(_resultSingletonP2);
-        int idx = result.ClosestActualIndex;
-        if (idx < 0) return;
-
-        var qCfg = _em.CreateEntityQuery(
-            typeof(ActualParticleSet),
-            typeof(ActualParticleStatusElement)
-        );
-        if (qCfg.IsEmpty) return;
-
-        var cfgEntity = qCfg.GetSingletonEntity();
-        var statusBuf = _em.GetBuffer<ActualParticleStatusElement>(cfgEntity);
-
-        if (idx >= 0 && idx < statusBuf.Length)
-        {
-            var st = statusBuf[idx].Value;
-            bool wasGood = (st == ActualParticleStatus.Good);
-
-            // If you ever enable this, don't also call from P1.
-            // ActualParticlePoolSystem.NotifyFullyScanned(idx, wasGood);
-            _actualHolderIndexToPlayer.Remove(idx);
+            // Notify the controller so tutorial can advance from "destroy bad" → countdown.
+            var ctrl = SquidGameController.Instance;
+            if (ctrl != null)
+            {
+                ctrl.OnActualFullyScanned(idx, wasGood);
+            }
         }
     }
 
@@ -543,6 +562,45 @@ public sealed class MeasurementClick : MonoBehaviour
 
             if (AimCursorPlayer2 != null)
                 AimCursorPlayer2.position = new Vector2(worldP2.x, worldP2.y);
+        }
+
+        // ---------------------------------------------------------
+        // Intro warmup detection: movement OR click per player
+        // ---------------------------------------------------------
+        bool movedP1 = false;
+        bool movedP2 = false;
+        const float moveThreshold = 0.01f;
+
+        if (p1Available && _havePrevWorldP1)
+        {
+            if (math.distance(worldP1, _prevWorldP1) > moveThreshold)
+                movedP1 = true;
+        }
+        if (p2Available && _havePrevWorldP2)
+        {
+            if (math.distance(worldP2, _prevWorldP2) > moveThreshold)
+                movedP2 = true;
+        }
+
+        var ctrlRef = SquidGameController.Instance;
+        if (ctrlRef != null && ctrlRef.CurrentStage == SquidStage.Playing)
+        {
+            if (edgeDownP1 || movedP1)
+                ctrlRef.NotifyIntroClick(1);
+            if (edgeDownP2 || movedP2)
+                ctrlRef.NotifyIntroClick(2);
+        }
+
+        // During tutorial countdown we want movement but no clicks.
+        if (ClickLocked)
+        {
+            pressedP1 = false;
+            edgeDownP1 = false;
+            edgeUpP1 = false;
+
+            pressedP2 = false;
+            edgeDownP2 = false;
+            edgeUpP2 = false;
         }
 
         // =========================================================
@@ -1116,6 +1174,17 @@ public sealed class MeasurementClick : MonoBehaviour
         // Store for next frame
         _p1WasScanningIdentPrev = p1ScanningIdent;
         _p2WasScanningIdentPrev = p2ScanningIdent;
+
+        if (p1Available)
+        {
+            _prevWorldP1 = worldP1;
+            _havePrevWorldP1 = true;
+        }
+        if (p2Available)
+        {
+            _prevWorldP2 = worldP2;
+            _havePrevWorldP2 = true;
+        }
     }
 
     // ------------------------------------------------------------

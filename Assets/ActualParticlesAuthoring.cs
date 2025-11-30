@@ -5,7 +5,7 @@ using UnityEngine;
 public sealed class ActualParticlesAuthoring : MonoBehaviour
 {
     [Header("How many actuals should be active at start")]
-    [Min(1)] public int desiredActiveCount = 2;
+    [Min(0)] public int desiredActiveCount = 2;
 
     [Header("Total pool size (max number of actual slots)")]
     [Min(1)] public int poolSize = 50;
@@ -19,7 +19,7 @@ public sealed class ActualParticlesAuthoring : MonoBehaviour
         {
             var e = GetEntity(TransformUsageFlags.None);
 
-            int desired = math.max(1, a.desiredActiveCount);
+            int desired = math.max(0, a.desiredActiveCount);
             int pool = math.max(desired, a.poolSize);
 
             // Singleton that stores counts and debug info

@@ -191,8 +191,8 @@ MonoBehaviour:
   diffusion: 60
   dtScale: 20
   velocityDamping: 0
-  forceAccel: 100
-  maxSpeed: 18
+  forceAccel: 50
+  maxSpeed: 17
   collapseJitterFrac: 0.01
 --- !u!114 &1933164176
 MonoBehaviour:
@@ -207,7 +207,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   center: {x: 0, y: 0}
-  extents: {x: 859.8, y: 462.1}
+  extents: {x: 910, y: 513}
 --- !u!114 &1933164177
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -220,7 +220,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 44c14d379cddcb544a93e06edf07481b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  desiredActiveCount: 2
+  desiredActiveCount: 0
   poolSize: 40
   seed: 12345
 --- !u!1660057539 &9223372036854775807

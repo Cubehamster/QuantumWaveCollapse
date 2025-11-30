@@ -97,9 +97,11 @@
     <Compile Include="Assets\ActualParticle.cs" />
     <Compile Include="Assets\CollapseAttractorSystem.cs" />
     <Compile Include="Assets\EnsureVelocitySystem.cs" />
+    <Compile Include="Assets\CountdownTimer.cs" />
     <Compile Include="Assets\SquidGameController.cs" />
     <Compile Include="Assets\ActualParticleDotUI.cs" />
     <Compile Include="Assets\Particles.SpawnerAuthoring.cs" />
+    <Compile Include="Assets\IntroTextFader.cs" />
     <Compile Include="Assets\CollapseAttractor.cs" />
     <Compile Include="Assets\RedistributeWalkersSystem.cs" />
     <Compile Include="Assets\MouseToClickRequest.cs" />
@@ -809,20 +811,20 @@
       <HintPath>Library\PackageCache\com.unity.visualscripting@6279e2b7c485\Runtime\VisualScripting.Flow\Dependencies\NCalc\Unity.VisualScripting.Antlr3.Runtime.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="Mono.Cecil">
-      <HintPath>Library\PackageCache\com.unity.nuget.mono-cecil@d78732e851eb\Mono.Cecil.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="System.Runtime.CompilerServices.Unsafe">
-      <HintPath>Library\PackageCache\com.unity.collections@d49facba0036\Unity.Collections.Tests\System.Runtime.CompilerServices.Unsafe\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+    <Reference Include="MQTTnet">
+      <HintPath>Assets\Packages\MQTTnet.4.3.7.1207\lib\netstandard2.1\MQTTnet.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>Library\PackageCache\com.unity.nuget.newtonsoft-json@4dfd81071c64\Runtime\Newtonsoft.Json.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="MQTTnet">
-      <HintPath>Assets\Packages\MQTTnet.4.3.7.1207\lib\netstandard2.1\MQTTnet.dll</HintPath>
+    <Reference Include="Mono.Cecil">
+      <HintPath>Library\PackageCache\com.unity.nuget.mono-cecil@d78732e851eb\Mono.Cecil.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe">
+      <HintPath>Library\PackageCache\com.unity.collections@d49facba0036\Unity.Collections.Tests\System.Runtime.CompilerServices.Unsafe\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Unity.Android.Types">
