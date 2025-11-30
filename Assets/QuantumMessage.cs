@@ -16,23 +16,22 @@ public class QuantumMessage
 }
 
 [Serializable]
-public class InfPayload
+public class SetPayload
 {
-    public string stage;     // "idle", "intro", "playing", "solved", ...
-
-    // Squid-specific extras (pick what you need):
-    public int? hits;
-    public int? misses;
-    public float? timeLeft;
+    public string stage;
+    public float? timer;
+    public int? difficulty;
+    public int? numplayers;
+    public string lang;   // NEW
 }
 
 [Serializable]
-public class SetPayload
+public class InfPayload
 {
-    public string stage;     // server sets puzzle stage
-    public float? timer;     // time allowed
-    public int? difficulty;  // optional
-
-    // Game-wide variable from server:
-    public int? numplayers;
+    public string stage;
+    public int? hits;
+    public int? misses;
+    public float? timeLeft;
+    public int? score;    // NEW
 }
+

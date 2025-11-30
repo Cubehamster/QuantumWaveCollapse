@@ -23,6 +23,7 @@ public class StabilityUI : MonoBehaviour
     private float Spawntimer = 0;
 
     public float score;
+    public bool spawningEnabled = true;
 
     // Update is called once per frame
     void Update()
@@ -33,7 +34,7 @@ public class StabilityUI : MonoBehaviour
         int unk = ActualParticlePoolSystem.CurrentActive - bad - good;
 
         int sum = bad + good + unk;
-        score = ((float)good + 0.45f * unk + 0.1f * bad) / sum;
+        score = ((float)good + 0.5f * unk + 0.1f * bad) / sum;
         float TargetGood = 400f * score;
 
         if (sum > 0)
@@ -124,11 +125,14 @@ public class StabilityUI : MonoBehaviour
             Dash.gameObject.SetActive(true);
             DashFlipped.gameObject.SetActive(true);
 
+            if (!spawningEnabled)
+                return;
+
             if (ActualParticlePoolSystem.s_SuppressIdentifySpawns || ActualParticlePoolSystem.s_SuppressCoopSpawns)
                 return;
 
+
             Spawntimer += Time.deltaTime;
-            Debug.Log(score + " + " + Spawntimer);
 
             if (score > 0.9 && Spawntimer > 5)
             {
@@ -165,8 +169,9 @@ public class StabilityUI : MonoBehaviour
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score <= 0.6f)
+            else if (score <= 0.6f && Spawntimer > 26)
             {
+                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
         }
@@ -176,6 +181,12 @@ public class StabilityUI : MonoBehaviour
     {
         StartCoroutine(FadeRect(GoodBar, targetAlpha, duration));
         StartCoroutine(FadeRect(Outline, targetAlpha, duration));
+        StartCoroutine(FadeRect(GoodBarFlipped, targetAlpha, duration));
+        StartCoroutine(FadeRect(OutlineFlipped, targetAlpha, duration));
+        StartCoroutine(FadeDash(Dash, targetAlpha, duration));
+        StartCoroutine(FadeDash(DashFlipped, targetAlpha, duration));
+        StartCoroutine(FadeText(Status, targetAlpha, duration));
+        StartCoroutine(FadeText(StatusFlipped, targetAlpha, duration));
     }
 
     private System.Collections.IEnumerator FadeRect(Shapes.Rectangle rect, float targetAlpha, float duration)
@@ -202,6 +213,66 @@ public class StabilityUI : MonoBehaviour
             }
 
             rect.Color = new Color(rect.Color.r, rect.Color.g, rect.Color.b, targetAlpha);
+        }
+
+        if (Mathf.Approximately(targetAlpha, 0f))
+            rect.gameObject.SetActive(false);
+    }
+
+    private System.Collections.IEnumerator FadeDash(Shapes.Line rect, float targetAlpha, float duration)
+    {
+        if (rect == null)
+            yield break;
+
+        rect.gameObject.SetActive(true);
+        Color startColor = rect.Color;
+        float t = 0f;
+
+        if (duration <= 0f)
+        {
+            rect.Color = new Color(rect.Color.r, rect.Color.g, rect.Color.b, targetAlpha);
+        }
+        else
+        {
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                float u = Mathf.Clamp01(t / duration);
+                rect.Color = Vector4.Lerp(startColor, new Color(rect.Color.r, rect.Color.g, rect.Color.b, targetAlpha), u);
+                yield return null;
+            }
+
+            rect.Color = new Color(rect.Color.r, rect.Color.g, rect.Color.b, targetAlpha);
+        }
+
+        if (Mathf.Approximately(targetAlpha, 0f))
+            rect.gameObject.SetActive(false);
+    }
+
+    private System.Collections.IEnumerator FadeText(TextMeshProUGUI rect, float targetAlpha, float duration)
+    {
+        if (rect == null)
+            yield break;
+
+        rect.gameObject.SetActive(true);
+        Color startColor = rect.faceColor;
+        float t = 0f;
+
+        if (duration <= 0f)
+        {
+            rect.faceColor = new Color(rect.faceColor.r, rect.faceColor.g, rect.faceColor.b, targetAlpha);
+        }
+        else
+        {
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                float u = Mathf.Clamp01(t / duration);
+                rect.faceColor = Color.Lerp(rect.faceColor, new Color(rect.faceColor.r, rect.faceColor.g, rect.faceColor.b, targetAlpha), u);
+                yield return null;
+            }
+
+            rect.faceColor = new Color(rect.faceColor.r, rect.faceColor.g, rect.faceColor.b, targetAlpha);
         }
 
         if (Mathf.Approximately(targetAlpha, 0f))

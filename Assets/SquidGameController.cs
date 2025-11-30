@@ -1,15 +1,16 @@
 ﻿using System;
 using System.Threading.Tasks;
 using TMPro;
+using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 using UnityEngine;
 
 public enum SquidStage
 {
     Idle,
     Intro,
-    Playing,
-    Failed,
+    Active,   // was Playing
     Solved
 }
 
@@ -69,6 +70,7 @@ public class SquidGameController : MonoBehaviour
     [Tooltip("Length of the numeric countdown (3,2,1) after 'Get Ready'.")]
     [SerializeField] private float introCountdownDuration = 3f;
 
+    [Header("Game Timers")]
     public CountdownTimer Timer;
     public CountdownTimer TimerFlipped;
 
@@ -82,7 +84,20 @@ public class SquidGameController : MonoBehaviour
 
     public SquidStage CurrentStage => _currentStage;
 
-    // ---------------- Intro tutorial internal state (runs inside Playing) ----------------
+    // Game-end tracking so we don’t finish twice
+    private bool _gameEnded;
+
+    // True once the main game timer has been started
+    private bool _timerStarted;
+
+    // Final game result
+    private bool _finalStable;
+    private float _finalScore;
+
+    // Solved state coroutine handle
+    private Coroutine _solvedRoutine;
+
+    // ---------------- Intro tutorial internal state (runs inside Active) ----------------
 
     private enum IntroPhase
     {
@@ -107,7 +122,7 @@ public class SquidGameController : MonoBehaviour
     private bool _introForceNextGood;
     private bool _introForceNextBad;
 
-    // Optional: skip tutorial on subsequent entries to Playing
+    // Optional: skip tutorial on subsequent entries to Active
     private bool _introTutorialCompleted;
 
     private void Awake()
@@ -136,7 +151,21 @@ public class SquidGameController : MonoBehaviour
         if (_mqtt != null)
         {
             await _mqtt.PublishConnectionAsync("connected");
-            await SendStageUpdateAsync("logic");
+            await SendStageUpdateAsync("connected");
+        }
+    }
+
+    private void Update()
+    {
+        // Track remaining time from Timer and end game when it hits 0
+        if (_currentStage == SquidStage.Active && !_gameEnded && _timerStarted && Timer != null)
+        {
+            _timeLeft = Timer.remaining;
+
+            if (_timeLeft <= 0f)
+            {
+                OnGameTimerFinished();
+            }
         }
     }
 
@@ -199,16 +228,21 @@ public class SquidGameController : MonoBehaviour
         await _mqtt.PublishStageAsync(stageString, trig, _hits, _misses, _timeLeft);
     }
 
+    // Game-end MQTT (per spec: trig = "time", score = 0/1)
+    private async Task PublishGameEndAsync(int score)
+    {
+        if (_mqtt == null) return;
+
+        // quant/squid {"sndr":"squid-ctrl", "inf":{"stage":"solved","score":score},"trig":"time"}
+        await _mqtt.PublishGameEndAsync("solved", score);
+    }
+
     // =========================================================
     //  Stage application (local behaviour)
     // =========================================================
 
     private void ApplyStageImmediately(SquidStage newStage, bool sendMqtt)
     {
-        //// We allow re-entering Playing (tutorial) so no early-return there.
-        //if (newStage == _currentStage && newStage != SquidStage.Playing)
-        //    return;
-
         _currentStage = newStage;
         Debug.Log("[SQUID] Stage changed to " + _currentStage);
 
@@ -223,11 +257,8 @@ public class SquidGameController : MonoBehaviour
             case SquidStage.Intro:
                 EnterIntro();
                 break;
-            case SquidStage.Playing:
-                EnterPlaying();
-                break;
-            case SquidStage.Failed:
-                EnterFailed();
+            case SquidStage.Active:
+                EnterActive();
                 break;
             case SquidStage.Solved:
                 EnterSolved();
@@ -244,12 +275,28 @@ public class SquidGameController : MonoBehaviour
     {
         Debug.Log("[SQUID] EnterIdle");
 
+        _gameEnded = false;
+        _timerStarted = false;
+
+        // Ensure chaos mode & forces are reset
+        OrbitalPresetCycler.ExitChaosMode();
+        ZeroAllForces();
+
         ActualParticlePoolSystem.RequestClearAll();
 
         SetMeasurementEnabled(false);
+        MeasurementClick.ClickLocked = true;
+        if (measurementClick != null)
+            measurementClick.ClearClickRequests();
+
         SetCrosshairP1(false);
         SetCrosshairP2(false);
-        StabilityUI.FadeStability(0, 0.1f);
+
+        if (StabilityUI != null)
+        {
+            StabilityUI.spawningEnabled = false;
+            StabilityUI.FadeStability(0, 0.1f);
+        }
 
         HideAllTutorialTextImmediate();
         ClearCountdownUIImmediate();
@@ -257,20 +304,29 @@ public class SquidGameController : MonoBehaviour
         OrbitalPresetCycler.EnterIdleMode(idleOrbitalInterval);
     }
 
-    /// <summary>
-    /// New Intro: like Idle, but crosshairs ON so players can move/feel them.
-    /// No Actuals in the pool; orbitals idle-cycle.
-    /// </summary>
     private void EnterIntro()
     {
         Debug.Log("[SQUID] EnterIntro (practice)");
 
+        _gameEnded = false;
+        _timerStarted = false;
+
+        // Ensure chaos mode & forces are reset
+        OrbitalPresetCycler.ExitChaosMode();
+        ZeroAllForces();
+
         ActualParticlePoolSystem.RequestClearAll();
 
         SetMeasurementEnabled(true);
+        MeasurementClick.ClickLocked = false;
         SetCrosshairP1(true);
         SetCrosshairP2(true);
-        StabilityUI.FadeStability(0, 0.1f);
+
+        if (StabilityUI != null)
+        {
+            StabilityUI.spawningEnabled = false;
+            StabilityUI.FadeStability(0, 0.1f);
+        }
 
         HideAllTutorialTextImmediate();
         ClearCountdownUIImmediate();
@@ -278,13 +334,16 @@ public class SquidGameController : MonoBehaviour
         OrbitalPresetCycler.EnterIdleMode(idleOrbitalInterval);
     }
 
-    /// <summary>
-    /// Playing now includes the tutorial sequence first, then transitions
-    /// seamlessly into normal gameplay (same stage = Playing).
-    /// </summary>
-    private void EnterPlaying()
+    private void EnterActive()
     {
-        Debug.Log("[SQUID] EnterPlaying");
+        Debug.Log("[SQUID] EnterActive");
+
+        _gameEnded = false;
+        _timerStarted = false;
+
+        // Ensure chaos is off and forces are clean
+        OrbitalPresetCycler.ExitChaosMode();
+        ZeroAllForces();
 
         // Stop idle orbital cycling, force a specific starting orbital for tutorial
         OrbitalPresetCycler.ExitIdleMode();
@@ -295,9 +354,15 @@ public class SquidGameController : MonoBehaviour
 
         // Measurement ON, both cursors visible
         SetMeasurementEnabled(true);
+        MeasurementClick.ClickLocked = false;
         SetCrosshairP1(true);
         SetCrosshairP2(true);
-        StabilityUI.FadeStability(1, 2f);
+
+        if (StabilityUI != null)
+        {
+            StabilityUI.spawningEnabled = false;
+            StabilityUI.FadeStability(1, 2f);
+        }
 
         HideAllTutorialTextImmediate();
         ClearCountdownUIImmediate();
@@ -314,37 +379,153 @@ public class SquidGameController : MonoBehaviour
         }
         else
         {
-            // If you want to skip tutorial entirely on re-entry, this is where
-            // you’d start normal gameplay logic directly.
+            // Skip tutorial on re-entry: start normal gameplay directly
+            StartGameTimer();
+            if (StabilityUI != null)
+                StabilityUI.spawningEnabled = true;
         }
-    }
-
-    private void EnterFailed()
-    {
-        Debug.Log("[SQUID] EnterFailed");
-
-        SetMeasurementEnabled(false);
-        SetCrosshairP1(false);
-        SetCrosshairP2(false);
-        StabilityUI.FadeStability(1, 2f);
-
-        ActualParticlePoolSystem.RequestClearAll();
-        HideAllTutorialTextImmediate();
-        ClearCountdownUIImmediate();
     }
 
     private void EnterSolved()
     {
         Debug.Log("[SQUID] EnterSolved");
 
+        _timerStarted = false;
+
         SetMeasurementEnabled(false);
+        MeasurementClick.ClickLocked = true;
+        if (measurementClick != null)
+            measurementClick.ClearClickRequests();   // hard stop click input
+
+        // Also zero ECS forces so no residual pushes
+        ZeroAllForces();
+
         SetCrosshairP1(false);
         SetCrosshairP2(false);
-        StabilityUI.FadeStability(1, 2f);
 
-        ActualParticlePoolSystem.RequestClearAll();
+        if (StabilityUI != null)
+        {
+            StabilityUI.spawningEnabled = false;
+            StabilityUI.FadeStability(1, 2f);
+        }
+
         HideAllTutorialTextImmediate();
-        ClearCountdownUIImmediate();
+        ClearCountdownUIImmediate(); // we’ll reuse overlay with new text
+
+        if (_solvedRoutine != null)
+            StopCoroutine(_solvedRoutine);
+
+        _solvedRoutine = StartCoroutine(SolvedStateRoutine());
+    }
+
+    private System.Collections.IEnumerator SolvedStateRoutine()
+    {
+        // 1) Apply final particle state (all green or all red)
+        ApplyFinalParticleState(_finalStable);
+
+        Debug.Log("SolvedStateRoutine started. State is: " + _finalStable);
+
+        // 2) Drive orbitals / chaos behaviour
+        if (_finalStable)
+        {
+            // Stable result:
+            //  - ensure chaos mode is OFF
+            //  - snap back to OneS
+            OrbitalPresetCycler.ExitChaosMode();
+            OrbitalPresetCycler.ForcePreset("OneS");
+        }
+        else
+        {
+            Debug.Log("Enter ChaosMode State");
+            // Unstable result:
+            //  - turn on chaos mode (OrbitalKind2D.None + high diffusion)
+            OrbitalPresetCycler.EnterChaosMode();
+        }
+
+        // 3) Show overlay message ("SYSTEM: STABLE/UNSTABLE")
+        if (countdownOverlay != null)
+        {
+            countdownOverlay.gameObject.SetActive(true);
+            yield return FadeCanvasGroup(countdownOverlay, 1f, 0.5f);
+        }
+
+        if (countdownLabel != null)
+        {
+            countdownLabel.text = _finalStable
+                ? "SYSTEM STABALIZED"
+                : "SYSTEM COLLAPSE";
+        }
+
+        // 4) Stay in Solved for 60 seconds
+        const float solvedDuration = 60f;
+        float t = 0f;
+        while (t < solvedDuration && _currentStage == SquidStage.Solved)
+        {
+            t += Time.deltaTime;
+            yield return null;
+        }
+
+        // 5) Fade out overlay
+        if (countdownOverlay != null)
+            yield return FadeCanvasGroup(countdownOverlay, 0f, 0.5f);
+
+        // 6) Make sure chaos is OFF before next run, then back to Idle
+        OrbitalPresetCycler.ExitChaosMode();
+
+        ApplyStageImmediately(SquidStage.Idle, sendMqtt: true);
+        _solvedRoutine = null;
+    }
+
+    private void ApplyFinalParticleState(bool stable)
+    {
+        var world = World.DefaultGameObjectInjectionWorld;
+        if (world == null) return;
+
+        var em = world.EntityManager;
+        var q = em.CreateEntityQuery(
+            ComponentType.ReadWrite<ActualParticleSet>(),
+            ComponentType.ReadWrite<ActualParticleStatusElement>(),
+            ComponentType.ReadWrite<ActualParticleRef>()
+        );
+
+        if (q.IsEmptyIgnoreFilter)
+            return;
+
+        var cfgEnt = q.GetSingletonEntity();
+        var statusBuf = em.GetBuffer<ActualParticleStatusElement>(cfgEnt);
+        var refBuf = em.GetBuffer<ActualParticleRef>(cfgEnt);
+
+        var targetStatus = stable ? ActualParticleStatus.Good
+                                  : ActualParticleStatus.Bad;
+
+        int activeCount = 0;
+
+        for (int i = 0; i < statusBuf.Length && i < refBuf.Length; i++)
+        {
+            if (refBuf[i].Walker != Entity.Null)
+            {
+                statusBuf[i] = new ActualParticleStatusElement
+                {
+                    Value = targetStatus
+                };
+                activeCount++;
+            }
+        }
+
+        // Keep the global counters consistent for UI
+        ActualParticlePoolSystem.CurrentUnknown = 0;
+        if (stable)
+        {
+            ActualParticlePoolSystem.CurrentGood = activeCount;
+            ActualParticlePoolSystem.CurrentBad = 0;
+        }
+        else
+        {
+            ActualParticlePoolSystem.CurrentGood = 0;
+            ActualParticlePoolSystem.CurrentBad = activeCount;
+        }
+
+        ActualParticlePoolSystem.CurrentActive = activeCount;
     }
 
     private void StopIntroIfAny()
@@ -363,13 +544,91 @@ public class SquidGameController : MonoBehaviour
     }
 
     // =========================================================
-    //  Intro tutorial sequence (runs while stage == Playing)
+    //  Game timer & end-of-game stability
+    // =========================================================
+
+    private float GetGameDurationSeconds()
+    {
+        switch (_numPlayers)
+        {
+            case 4: return 240f;
+            case 3: return 180f;
+            case 2: return 120f;
+            default: return 120;
+        }
+    }
+
+    private void StartGameTimer()
+    {
+        float duration = GetGameDurationSeconds();
+
+        if (Timer != null)
+            Timer.StartCountdown(duration);
+        if (TimerFlipped != null)
+            TimerFlipped.StartCountdown(duration);
+
+        _timeLeft = duration;
+        _gameEnded = false;
+        _timerStarted = true;
+    }
+
+    private void OnGameTimerFinished()
+    {
+        _gameEnded = true;
+        _timerStarted = false;
+
+        // Compute score same way as StabilityUI
+        int good = ActualParticlePoolSystem.CurrentGood;
+        int bad = ActualParticlePoolSystem.CurrentBad;
+        int unk = ActualParticlePoolSystem.CurrentActive - bad - good;
+
+        int sum = bad + good + unk;
+        float score = 0f;
+        if (sum > 0)
+        {
+            score = ((float)good + 0.5f * unk + 0.1f * bad) / sum;
+        }
+        else
+        {
+            // No particles; treat as stable by default
+            score = 1f;
+        }
+
+        int stableFlag = score >= 0.75f ? 1 : 0;
+
+        _finalScore = score;
+        _finalStable = (stableFlag == 1);
+
+        Debug.Log($"[SQUID] Game timer finished. score={score:F3} -> stableFlag={stableFlag}");
+
+        // Stop further interactions & spawns
+        SetMeasurementEnabled(false);
+        MeasurementClick.ClickLocked = true;
+        if (measurementClick != null)
+            measurementClick.ClearClickRequests();
+
+        ZeroAllForces();
+
+        SetCrosshairP1(false);
+        SetCrosshairP2(false);
+
+        if (StabilityUI != null)
+            StabilityUI.spawningEnabled = false;
+
+        // Move to solved stage (local)
+        ApplyStageImmediately(SquidStage.Solved, sendMqtt: false);
+
+        // MQTT game end message (score 0/1)
+        _ = PublishGameEndAsync(stableFlag);
+    }
+
+    // =========================================================
+    //  Intro tutorial sequence (runs while stage == Active)
     // =========================================================
 
     private System.Collections.IEnumerator IntroRoutine()
     {
         // Phase 0: Warmup.
-        // Both players must click or move once; AFTER that, we wait introWarmupDuration seconds.
         _introPhase = IntroPhase.Warmup;
         _introP1Clicked = false;
         _introP2Clicked = false;
@@ -377,34 +636,30 @@ public class SquidGameController : MonoBehaviour
         Debug.Log("[Intro] Warmup: waiting for both players to click/move at least once.");
 
         // Wait until both have interacted
-        while (!(_introP1Clicked && _introP2Clicked) && _currentStage == SquidStage.Playing)
+        while (!(_introP1Clicked && _introP2Clicked) && _currentStage == SquidStage.Active)
         {
             yield return null;
         }
 
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             yield break;
 
         Debug.Log("[Intro] Both players have interacted. Warmup timer starts.");
 
         float warmupRemaining = introWarmupDuration;
-        while (warmupRemaining > 0f && _currentStage == SquidStage.Playing)
+        while (warmupRemaining > 0f && _currentStage == SquidStage.Active)
         {
             warmupRemaining -= Time.deltaTime;
             yield return null;
         }
 
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             yield break;
 
         // ---------------------------------------------------------
         // Phase 1: spawn 1 UNKNOWN Actual, disable P1, P2 scans to identify (forced Good)
         // ---------------------------------------------------------
         Debug.Log("[Intro] Phase 1: Spawn single UNKNOWN Actual, P1 disabled, P2 scans to identify (Good).");
-
-        // IMPORTANT: do NOT call RequestClearAll here, or it will zero out
-        // the pending spawn on the next ECS update.
-        // The pool was already cleared in EnterPlaying().
 
         // Tutorial: no extra spawns from Good identify or coop destroy.
         ActualParticlePoolSystem.SetTutorialSpawnSuppression(
@@ -422,18 +677,17 @@ public class SquidGameController : MonoBehaviour
         _introForceNextBad = false;
         _introPhase = IntroPhase.WaitingForFirstIdentify;
 
-        // Fade in both scan texts (each side sees their mirrored version)
+        // Fade in scan text
         yield return FadeCanvasGroup(scanP1Text, 1f, introFadeDuration);
-        //yield return FadeCanvasGroup(scanP2Text, 1f, introFadeDuration);
 
         // Wait until OnActualIdentified() moves us on
-        while (_currentStage == SquidStage.Playing &&
+        while (_currentStage == SquidStage.Active &&
                _introPhase == IntroPhase.WaitingForFirstIdentify)
         {
             yield return null;
         }
 
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             yield break;
 
         if (_introPhase != IntroPhase.AfterFirstIdentify)
@@ -465,18 +719,17 @@ public class SquidGameController : MonoBehaviour
         _introForceNextBad = true; // this identification becomes BAD
         _introPhase = IntroPhase.WaitingForSecondIdentify;
 
-        // Show scan texts again (for Player 1 this time in terms of meaning)
-        //yield return FadeCanvasGroup(scanP1Text, 1f, introFadeDuration);
+        // scan text for second player
         yield return FadeCanvasGroup(scanP2Text, 1f, introFadeDuration);
 
         // Wait for second identify
-        while (_currentStage == SquidStage.Playing &&
+        while (_currentStage == SquidStage.Active &&
                _introPhase == IntroPhase.WaitingForSecondIdentify)
         {
             yield return null;
         }
 
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             yield break;
 
         if (_introPhase != IntroPhase.AfterSecondIdentify)
@@ -497,24 +750,24 @@ public class SquidGameController : MonoBehaviour
         yield return FadeCanvasGroup(destroyRedText, 1f, introFadeDuration);
 
         // Wait until the BAD Actual is fully co-op scanned (destroyed)
-        while (_currentStage == SquidStage.Playing &&
+        while (_currentStage == SquidStage.Active &&
                _introPhase == IntroPhase.WaitingForDestroyBad)
         {
             yield return null;
         }
 
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             yield break;
 
         if (_introPhase != IntroPhase.Countdown)
             yield break;
 
-        // Phase 3: countdown (no new Actuals spawned from coop destroy—
-        // suppression is still ON at this point).
+        // Phase 3: countdown
         Debug.Log("[Intro] BAD Actual destroyed. Starting countdown.");
 
-        // Lock scanning during countdown (movement still allowed via ClickLocked)
+        // Lock clicks during countdown (movement still allowed via MouseParty, but we block clicks)
         SetMeasurementEnabled(true);
+        MeasurementClick.ClickLocked = true;
 
         // Hide "Destroy Red Particles"
         yield return FadeCanvasGroup(destroyRedText, 0f, introFadeDuration);
@@ -522,18 +775,18 @@ public class SquidGameController : MonoBehaviour
         // Countdown overlay
         yield return CountdownRoutine();
 
-        // Tutorial done → normal Playing
+        // Tutorial done → normal Active gameplay
         _introPhase = IntroPhase.None;
         _introTutorialCompleted = true;
 
         // Re-enable measurement for normal gameplay
         SetMeasurementEnabled(true);
+        MeasurementClick.ClickLocked = false;
         SetCrosshairP1(true);
         SetCrosshairP2(true);
 
-        Debug.Log("[Intro] Tutorial complete. Continuing Playing with normal rules.");
+        Debug.Log("[Intro] Tutorial complete. Continuing Active with normal rules.");
     }
-
 
     private System.Collections.IEnumerator CountdownRoutine()
     {
@@ -550,7 +803,6 @@ public class SquidGameController : MonoBehaviour
         if (countdownLabel != null)
             countdownLabel.text = "Get Ready";
 
-        // show "Get Ready" for 1 second (tweak as you like)
         yield return new WaitForSeconds(1f);
 
         // Step 2: 3, 2, 1
@@ -559,8 +811,6 @@ public class SquidGameController : MonoBehaviour
             if (countdownLabel != null)
                 countdownLabel.text = n.ToString();
 
-            // You can use introCountdownDuration / 3f if you want a different pacing,
-            // but here we just use 1 second per number.
             yield return new WaitForSeconds(1f);
         }
 
@@ -584,28 +834,26 @@ public class SquidGameController : MonoBehaviour
         // Unlock clicking so the normal game can proceed
         MeasurementClick.ClickLocked = false;
 
-        Timer.StartCountdown(120);
-        TimerFlipped.StartCountdown(120);
+        // Start main game timer (based on _numPlayers)
+        StartGameTimer();
+
+        if (StabilityUI != null)
+            StabilityUI.spawningEnabled = true;
     }
 
     // =========================================================
     //  Hooks from MeasurementClick / pool
     // =========================================================
 
-    /// <summary>
-    /// MeasurementClick calls this when an Actual is identified (Unknown -> Good/Bad).
-    /// </summary>
     public void OnActualIdentified(int actualIndex, bool isGood)
     {
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             return;
 
-        // First identify (should be Good)
         if (_introPhase == IntroPhase.WaitingForFirstIdentify)
         {
             _introForceNextGood = false;
 
-            // Fade out scan texts
             if (scanP1Text != null)
                 StartCoroutine(FadeCanvasGroup(scanP1Text, 0f, introFadeDuration));
             if (scanP2Text != null)
@@ -614,7 +862,6 @@ public class SquidGameController : MonoBehaviour
             _introPhase = IntroPhase.AfterFirstIdentify;
             Debug.Log("[Intro] OnActualIdentified (first) index=" + actualIndex + " isGood=" + isGood);
         }
-        // Second identify (should be Bad)
         else if (_introPhase == IntroPhase.WaitingForSecondIdentify)
         {
             _introForceNextBad = false;
@@ -629,15 +876,11 @@ public class SquidGameController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Called by MeasurementClick when an Actual has been fully co-op scanned (destroyed).
-    /// </summary>
     public void OnActualFullyScanned(int actualIndex, bool wasGood)
     {
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             return;
 
-        // We only care about the final BAD destruction for the tutorial
         if (_introPhase == IntroPhase.WaitingForDestroyBad && !wasGood)
         {
             _introPhase = IntroPhase.Countdown;
@@ -645,15 +888,11 @@ public class SquidGameController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// MeasurementClick can call this in OnProgressComplete to override RNG
-    /// during the intro tutorial. Returns true if a forced result was consumed.
-    /// </summary>
     public bool TryConsumeIntroForcedIdentify(out bool isGood)
     {
         isGood = false;
 
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             return false;
 
         if (_introForceNextGood)
@@ -673,12 +912,9 @@ public class SquidGameController : MonoBehaviour
         return false;
     }
 
-    /// <summary>
-    /// Called from MeasurementClick when a player clicks or moves during tutorial warmup.
-    /// </summary>
     public void NotifyIntroClick(int playerIndex)
     {
-        if (_currentStage != SquidStage.Playing)
+        if (_currentStage != SquidStage.Active)
             return;
 
         if (_introPhase != IntroPhase.Warmup)
@@ -704,12 +940,20 @@ public class SquidGameController : MonoBehaviour
     {
         if (crosshairP1Root != null)
             crosshairP1Root.SetActive(enabled);
+
+        // Also gate P1 input in MeasurementClick
+        if (measurementClick != null)
+            measurementClick.SetPlayer1InputEnabled(enabled);
     }
 
     private void SetCrosshairP2(bool enabled)
     {
         if (crosshairP2Root != null)
             crosshairP2Root.SetActive(enabled);
+
+        // Also gate P2 input in MeasurementClick
+        if (measurementClick != null)
+            measurementClick.SetPlayer2InputEnabled(enabled);
     }
 
     // =========================================================
@@ -736,6 +980,16 @@ public class SquidGameController : MonoBehaviour
         if (cg == null) return;
         cg.alpha = alpha;
         cg.gameObject.SetActive(active);
+    }
+
+    public void SetLanguageFromServer(string lang)
+    {
+        // lang will be "en" or "nl"
+        Debug.Log("[SQUID] Language updated to: " + lang);
+
+        // TODO: switch UI text content here
+        // Example:
+        // tutorialText.text = lang == "nl" ? "Scan om te identificeren" : "Scan to Identify";
     }
 
     private System.Collections.IEnumerator FadeCanvasGroup(CanvasGroup cg, float targetAlpha, float duration)
@@ -798,6 +1052,27 @@ public class SquidGameController : MonoBehaviour
                     Value = ActualParticleStatus.Unknown
                 };
             }
+        }
+    }
+
+    /// <summary>
+    /// Hard reset all ECS Force components so cursors can't keep pushing
+    /// after the game has ended / stage changed.
+    /// </summary>
+    private void ZeroAllForces()
+    {
+        var world = World.DefaultGameObjectInjectionWorld;
+        if (world == null) return;
+
+        var em = world.EntityManager;
+        var q = em.CreateEntityQuery(ComponentType.ReadWrite<Force>());
+        if (q.IsEmptyIgnoreFilter)
+            return;
+
+        using var entities = q.ToEntityArray(Allocator.Temp);
+        foreach (var e in entities)
+        {
+            em.SetComponentData(e, new Force { Value = float2.zero });
         }
     }
 }

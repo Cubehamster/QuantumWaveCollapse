@@ -144,6 +144,8 @@ public sealed class MeasurementClick : MonoBehaviour
     [Header("Mode (P1)")]
     public ClickMode mode = ClickMode.HoldToPush;
 
+    public bool p2mirrored = false;
+
     // ---------------- ECS fields ----------------
 
     EntityManager _em;
@@ -193,6 +195,11 @@ public sealed class MeasurementClick : MonoBehaviour
     float2 _prevWorldP2;
     bool _havePrevWorldP1;
     bool _havePrevWorldP2;
+
+    // Per-player input gates (controlled by SquidGameController)
+    bool _p1InputEnabled = true;
+    bool _p2InputEnabled = true;
+
 
     void OnEnable()
     {
@@ -275,10 +282,311 @@ public sealed class MeasurementClick : MonoBehaviour
 
     void OnDisable()
     {
+        ClearClickRequests();
+
         _haveClickP1 = _haveClickP2 = false;
         _haveResultP1 = _haveResultP2 = false;
         _actualHolderIndexToPlayer.Clear();
     }
+
+    public void SetPlayer1InputEnabled(bool enabled)
+    {
+        _p1InputEnabled = enabled;
+
+        if (!enabled)
+        {
+            // Neutralise P1 ClickRequest in ECS so no forces / scanning
+            if (_em != null && _haveClickP1 && _em.Exists(_clickSingletonP1))
+            {
+                _em.SetComponentData(_clickSingletonP1, new ClickRequest
+                {
+                    WorldPos = float2.zero,
+                    Radius = 0f,
+                    PushStrength = 0f,
+                    IsPressed = false,
+                    EdgeDown = false,
+                    EdgeUp = false,
+                    ExclusionRadiusMultiplier = 0f,
+                    InnerRadius = 0f,
+                    InnerPushStrength = 0f
+                });
+            }
+
+            // Drop any holder entries owned by player 1
+            if (_actualHolderIndexToPlayer.Count > 0)
+            {
+                var toRemove = new List<int>();
+                foreach (var kv in _actualHolderIndexToPlayer)
+                {
+                    if (kv.Value == 1)
+                        toRemove.Add(kv.Key);
+                }
+                foreach (var key in toRemove)
+                    _actualHolderIndexToPlayer.Remove(key);
+            }
+
+            // Reset P1-local state so no “ghost” interactions remain
+            _prevPressedP1 = false;
+            _p1RepelTimer = 0f;
+            _p1DropIndex = -1;
+            _p1DropUntilTime = 0f;
+            _p1WasScanningIdentPrev = false;
+            _havePrevWorldP1 = false;
+        }
+    }
+
+    public void SetPlayer2InputEnabled(bool enabled)
+    {
+        _p2InputEnabled = enabled;
+
+        if (!enabled)
+        {
+            // Neutralise P2 ClickRequest in ECS so no forces / scanning
+            if (_em != null && _haveClickP2 && _em.Exists(_clickSingletonP2))
+            {
+                _em.SetComponentData(_clickSingletonP2, new ClickRequestP2
+                {
+                    WorldPos = float2.zero,
+                    Radius = 0f,
+                    PushStrength = 0f,
+                    IsPressed = false,
+                    EdgeDown = false,
+                    EdgeUp = false,
+                    ExclusionRadiusMultiplier = 0f,
+                    InnerRadius = 0f,
+                    InnerPushStrength = 0f
+                });
+            }
+
+            // Drop any holder entries owned by player 2
+            if (_actualHolderIndexToPlayer.Count > 0)
+            {
+                var toRemove = new List<int>();
+                foreach (var kv in _actualHolderIndexToPlayer)
+                {
+                    if (kv.Value == 2)
+                        toRemove.Add(kv.Key);
+                }
+                foreach (var key in toRemove)
+                    _actualHolderIndexToPlayer.Remove(key);
+            }
+
+            // Reset P2-local state
+            _prevPressedP2 = false;
+            _p2RepelTimer = 0f;
+            _p2DropIndex = -1;
+            _p2DropUntilTime = 0f;
+            _p2WasScanningIdentPrev = false;
+            _havePrevWorldP2 = false;
+        }
+    }
+
+
+    void ResetAllInteractionStateAndRequests()
+    {
+        if (_em == null)
+            return;
+
+        // --- Clear ECS click requests (P1 + P2) ---
+        if (_haveClickP1 && _em.Exists(_clickSingletonP1))
+        {
+            _em.SetComponentData(_clickSingletonP1, new ClickRequest
+            {
+                WorldPos = float2.zero,
+                Radius = 0f,
+                PushStrength = 0f,
+                IsPressed = false,
+                EdgeDown = false,
+                EdgeUp = false,
+                ExclusionRadiusMultiplier = 0f,
+                InnerRadius = 0f,
+                InnerPushStrength = 0f
+            });
+        }
+
+        if (_haveClickP2 && _em.Exists(_clickSingletonP2))
+        {
+            _em.SetComponentData(_clickSingletonP2, new ClickRequestP2
+            {
+                WorldPos = float2.zero,
+                Radius = 0f,
+                PushStrength = 0f,
+                IsPressed = false,
+                EdgeDown = false,
+                EdgeUp = false,
+                ExclusionRadiusMultiplier = 0f,
+                InnerRadius = 0f,
+                InnerPushStrength = 0f
+            });
+        }
+
+        // --- Clear measurement results so nothing is "inside radius" anymore ---
+        if (_haveResultP1 && _em.Exists(_resultSingletonP1))
+        {
+            _em.SetComponentData(_resultSingletonP1, new MeasurementResult
+            {
+                Center = float2.zero,
+                HasActualInRadius = false,
+                ProbabilityLast = 0f,
+                ClosestActualIndex = -1,
+                ClosestActualPos = float2.zero
+            });
+        }
+
+        if (_haveResultP2 && _em.Exists(_resultSingletonP2))
+        {
+            _em.SetComponentData(_resultSingletonP2, new MeasurementResultP2
+            {
+                Center = float2.zero,
+                HasActualInRadius = false,
+                ProbabilityLast = 0f,
+                ClosestActualIndex = -1,
+                ClosestActualPos = float2.zero
+            });
+        }
+
+        // --- Local state reset ---
+        _prevPressedP1 = false;
+        _prevPressedP2 = false;
+
+        _p1RepelTimer = 0f;
+        _p2RepelTimer = 0f;
+
+        _p1DropIndex = -1;
+        _p2DropIndex = -1;
+        _p1DropUntilTime = 0f;
+        _p2DropUntilTime = 0f;
+
+        _p1WasScanningIdentPrev = false;
+        _p2WasScanningIdentPrev = false;
+
+        _actualHolderIndexToPlayer.Clear();
+
+        _havePrevWorldP1 = false;
+        _havePrevWorldP2 = false;
+
+        // (Optionally you could also reset cursor visuals here if you want.)
+    }
+
+
+    public void ClearClickRequests()
+    {
+        if (_em == null)
+            return;
+
+        // Make sure we know about result singletons,
+        // even if they were created after OnEnable.
+        if (!_haveResultP1)
+        {
+            var qRes1 = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResult>());
+            if (qRes1.CalculateEntityCount() > 0)
+            {
+                _resultSingletonP1 = qRes1.GetSingletonEntity();
+                _haveResultP1 = true;
+            }
+        }
+
+        if (!_haveResultP2)
+        {
+            var qRes2 = _em.CreateEntityQuery(ComponentType.ReadOnly<MeasurementResultP2>());
+            if (qRes2.CalculateEntityCount() > 0)
+            {
+                _resultSingletonP2 = qRes2.GetSingletonEntity();
+                _haveResultP2 = true;
+            }
+        }
+
+        // -----------------------------
+        // 1) Clear ClickRequest (P1/P2)
+        // -----------------------------
+        if (_haveClickP1 && _em.Exists(_clickSingletonP1))
+        {
+            _em.SetComponentData(_clickSingletonP1, new ClickRequest
+            {
+                WorldPos = float2.zero,
+                Radius = 0f,
+                PushStrength = 0f,
+                IsPressed = false,
+                EdgeDown = false,
+                EdgeUp = false,
+                ExclusionRadiusMultiplier = 0f,
+                InnerRadius = 0f,
+                InnerPushStrength = 0f
+            });
+        }
+
+        if (_haveClickP2 && _em.Exists(_clickSingletonP2))
+        {
+            _em.SetComponentData(_clickSingletonP2, new ClickRequestP2
+            {
+                WorldPos = float2.zero,
+                Radius = 0f,
+                PushStrength = 0f,
+                IsPressed = false,
+                EdgeDown = false,
+                EdgeUp = false,
+                ExclusionRadiusMultiplier = 0f,
+                InnerRadius = 0f,
+                InnerPushStrength = 0f
+            });
+        }
+
+        // --------------------------------------------
+        // 2) Clear MeasurementResult (P1/P2) so that
+        //    no Actual is treated as "inside radius".
+        // --------------------------------------------
+        if (_haveResultP1 && _em.Exists(_resultSingletonP1))
+        {
+            _em.SetComponentData(_resultSingletonP1, new MeasurementResult
+            {
+                Center = float2.zero,
+                HasActualInRadius = false,
+                ProbabilityLast = 0f,
+                ClosestActualIndex = -1,
+                ClosestActualPos = float2.zero
+            });
+        }
+
+        if (_haveResultP2 && _em.Exists(_resultSingletonP2))
+        {
+            _em.SetComponentData(_resultSingletonP2, new MeasurementResultP2
+            {
+                Center = float2.zero,
+                HasActualInRadius = false,
+                ProbabilityLast = 0f,
+                ClosestActualIndex = -1,
+                ClosestActualPos = float2.zero
+            });
+        }
+
+        // --------------------------------------------
+        // 3) Local state reset so there are no holders,
+        //    timers, drop windows, or "previous pressed".
+        // --------------------------------------------
+        _prevPressedP1 = false;
+        _prevPressedP2 = false;
+
+        _p1RepelTimer = 0f;
+        _p2RepelTimer = 0f;
+
+        _p1DropIndex = -1;
+        _p2DropIndex = -1;
+        _p1DropUntilTime = 0f;
+        _p2DropUntilTime = 0f;
+
+        _p1WasScanningIdentPrev = false;
+        _p2WasScanningIdentPrev = false;
+
+        _actualHolderIndexToPlayer.Clear();
+
+        _havePrevWorldP1 = false;
+        _havePrevWorldP2 = false;
+
+        // (Optional) you can also reset cursor visuals here if you want them snapped back.
+    }
+
+
+
 
     void InitBaseRadii()
     {
@@ -473,8 +781,19 @@ public sealed class MeasurementClick : MonoBehaviour
 
     void Update()
     {
-        if (!_haveClickP1 || !_em.Exists(_clickSingletonP1))
+        if (!_haveClickP1 || !_em.Exists(_clickSingletonP1) || !_haveClickP2 || !_em.Exists(_clickSingletonP2))
             return;
+
+
+        // If the game is not in Active, forcefully zero all interaction & ECS click state
+        var ctrl = SquidGameController.Instance;
+        bool gameActive = ctrl != null && ctrl.CurrentStage == SquidStage.Active;
+
+        if (!gameActive)
+        {
+            ResetAllInteractionStateAndRequests();
+            return;
+        }
 
         InitBaseRadii();
 
@@ -519,8 +838,9 @@ public sealed class MeasurementClick : MonoBehaviour
         // =========================================================
         // 1) Read raw input + world positions for both players
         // =========================================================
-        bool p1Available = cursorP1 != null && cursorP1.Enabled;
-        bool p2Available = cursorP2 != null && cursorP2.Enabled;
+        bool p1Available = cursorP1 != null && cursorP1.Enabled && _p1InputEnabled;
+        bool p2Available = cursorP2 != null && cursorP2.Enabled && _p2InputEnabled;
+
 
         bool pressedP1 = false, edgeDownP1 = false, edgeUpP1 = false;
         bool pressedP2 = false, edgeDownP2 = false, edgeUpP2 = false;
@@ -551,18 +871,45 @@ public sealed class MeasurementClick : MonoBehaviour
                 AimCursorPlayer1.position = new Vector2(worldP1.x, worldP1.y);
         }
 
-        if (p2Available)
+        if (!p2mirrored)
         {
-            pressedP2 = cursorP2.Mouse.IsPressed(MouseButton.Left);
-            edgeDownP2 = pressedP2 && !_prevPressedP2;
-            edgeUpP2 = !pressedP2 && _prevPressedP2;
+            if (p2Available)
+            {
+                pressedP2 = cursorP2.Mouse.IsPressed(MouseButton.Left);
+                edgeDownP2 = pressedP2 && !_prevPressedP2;
+                edgeUpP2 = !pressedP2 && _prevPressedP2;
 
-            Vector2 screenP2 = cursorP2.ScreenPosition;
-            worldP2 = ScreenToWorldXY(screenP2, planeZ);
+                Vector2 screenP2 = cursorP2.ScreenPosition;
+                worldP2 = ScreenToWorldXY(screenP2, planeZ);
 
-            if (AimCursorPlayer2 != null)
-                AimCursorPlayer2.position = new Vector2(worldP2.x, worldP2.y);
+                if (AimCursorPlayer2 != null)
+                    AimCursorPlayer2.position = new Vector2(worldP2.x, worldP2.y);
+            }
         }
+        else
+        {
+            if (p2Available)
+            {
+                pressedP2 = cursorP2.Mouse.IsPressed(MouseButton.Left);
+                edgeDownP2 = pressedP2 && !_prevPressedP2;
+                edgeUpP2 = !pressedP2 && _prevPressedP2;
+
+                // Get raw screen position from Mouse Party
+                Vector2 screenP2 = cursorP2.ScreenPosition;
+
+                // Mirror horizontally around the center of the screen
+                screenP2.x = Screen.width - screenP2.x;
+
+                // Convert mirrored screen coords to world
+                worldP2 = ScreenToWorldXY(screenP2, planeZ);
+
+                // Move P2’s aim cursor to the mirrored world position
+                if (AimCursorPlayer2 != null)
+                    AimCursorPlayer2.position = new Vector2(worldP2.x, worldP2.y);
+            }
+
+        }
+
 
         // ---------------------------------------------------------
         // Intro warmup detection: movement OR click per player
@@ -583,7 +930,7 @@ public sealed class MeasurementClick : MonoBehaviour
         }
 
         var ctrlRef = SquidGameController.Instance;
-        if (ctrlRef != null && ctrlRef.CurrentStage == SquidStage.Playing)
+        if (ctrlRef != null && ctrlRef.CurrentStage == SquidStage.Active)
         {
             if (edgeDownP1 || movedP1)
                 ctrlRef.NotifyIntroClick(1);

@@ -37,6 +37,10 @@ public static class OrbitalScore
         float2 sL;
         switch (PickKind(op))
         {
+            case OrbitalKind2D.None:
+                // No orbital structure: pure Brownian motion
+                sL = float2(0f, 0f);
+                break;
             // s / p you already had
             case OrbitalKind2D.OneS: sL = Score_1s(xL, op.A0, op.Epsilon); break;           // (1,0,0)
             case OrbitalKind2D.TwoS: sL = Score_2s(xL, op.A0, op.Epsilon); break;           // (2,0,0)

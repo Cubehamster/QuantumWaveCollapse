@@ -19,8 +19,12 @@ public class SquidMqttClient : MonoBehaviour
     [SerializeField] private string version = "1.0.0";
 
     private IMqttClient _client;
+
     private string _elementTopic = "quant/squid";
     private string _rootTopic = "quant";
+
+    // Latest received language (default English)
+    public string CurrentLanguage { get; private set; } = "en";
 
     private async void Start()
     {
@@ -45,14 +49,14 @@ public class SquidMqttClient : MonoBehaviour
             await _client.ConnectAsync(options);
             Debug.Log("[MQTT] Connected to broker " + brokerIp + ":" + brokerPort);
 
-            // quant/squid/#
+            // Subscribe to quant/squid/# for set messages
             await _client.SubscribeAsync(
                 new MqttTopicFilterBuilder()
                     .WithTopic(_elementTopic + "/#")
                     .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
                     .Build());
 
-            // quant/#
+            // Subscribe to quant/# for general messages
             await _client.SubscribeAsync(
                 new MqttTopicFilterBuilder()
                     .WithTopic(_rootTopic + "/#")
@@ -86,7 +90,7 @@ public class SquidMqttClient : MonoBehaviour
                 return Task.CompletedTask;
 
             if (msg.sndr == deviceId)
-                return Task.CompletedTask; // ignore own messages
+                return Task.CompletedTask; // Ignore own messages
 
             if (msg.set != null)
             {
@@ -104,7 +108,6 @@ public class SquidMqttClient : MonoBehaviour
     private async void HandleSet(QuantumMessage msg, string topic)
     {
         var controller = SquidGameController.Instance;
-
         if (controller == null)
             return;
 
@@ -125,10 +128,20 @@ public class SquidMqttClient : MonoBehaviour
                 msg.set.numplayers
             );
         }
+
+        // Language update
+        if (!string.IsNullOrEmpty(msg.set.lang))
+        {
+            CurrentLanguage = msg.set.lang.ToLower();
+            Debug.Log("[MQTT] Language set to " + CurrentLanguage);
+
+            controller.SetLanguageFromServer(CurrentLanguage);
+        }
     }
 
-
-    // ---- Public methods you call from gameplay code ----
+    // ------------------------------------------------------------------------
+    // Public Publish API
+    // ------------------------------------------------------------------------
 
     public async Task PublishConnectionAsync(string trig = "connected")
     {
@@ -181,6 +194,29 @@ public class SquidMqttClient : MonoBehaviour
 
         await PublishAsync(_elementTopic, message);
     }
+
+    // ------------------------------------------------------------------------
+    // NEW: Publish game end (score)
+    // ------------------------------------------------------------------------
+    public async Task PublishGameEndAsync(string stage, int score)
+    {
+        var inf = new InfPayload
+        {
+            stage = stage,
+            score = score
+        };
+
+        var message = new QuantumMessage
+        {
+            sndr = deviceId,
+            inf = inf,
+            trig = "time"
+        };
+
+        await PublishAsync(_elementTopic, message);
+    }
+
+    // ------------------------------------------------------------------------
 
     private async Task PublishAsync(string topic, QuantumMessage message)
     {

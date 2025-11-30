@@ -1251,6 +1251,12 @@ MonoBehaviour:
   defaultIdleInterval: 10
   Orbitalname: {fileID: 749241195}
   OrbitalnameFlipped: {fileID: 1209247450}
+  chaosPreset:
+    Diffusion: 1000
+    ForceAccel: 1000
+    VelocityDamping: 0
+    MaxSpeed: 200
+    DtScale: 2
 --- !u!114 &448779955
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1389,6 +1395,7 @@ MonoBehaviour:
   spawnScanLockout: 1
   logEvents: 0
   mode: 0
+  p2mirrored: 1
 --- !u!114 &448779960
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1486,6 +1493,8 @@ MonoBehaviour:
   unstableColor: {r: 1.216786, g: 0, b: 0, a: 1}
   Dash: {fileID: 2052670371}
   DashFlipped: {fileID: 1552578333}
+  score: 0
+  spawningEnabled: 1
 --- !u!1 &504506284
 GameObject:
   m_ObjectHideFlags: 0
@@ -2746,6 +2755,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   timerText: {fileID: 960290349}
+  remaining: 0
 --- !u!114 &960290349
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2951,7 +2961,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: deb4a8fd7836dfd408a136e6e884452e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  startStage: 2
+  startStage: 0
   measurementClick: {fileID: 448779959}
   crosshairP1Root: {fileID: 1105114897}
   crosshairP2Root: {fileID: 1445555883}
@@ -4331,6 +4341,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   timerText: {fileID: 1447655873}
+  remaining: 0
 --- !u!114 &1447655873
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4496,8 +4507,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 282.9
-  m_fontSizeBase: 282.9
+  m_fontSize: 280
+  m_fontSizeBase: 280
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -4565,7 +4576,7 @@ RectTransform:
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 1000, y: 400}
+  m_SizeDelta: {x: 1920, y: 400}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!225 &1469047822
 CanvasGroup:

@@ -26,6 +26,15 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
     public TextMeshProUGUI Orbitalname;
     public TextMeshProUGUI OrbitalnameFlipped;
 
+    // --- Chaos bookkeeping ---
+    Entity _orbitalEntity;
+    Entity _langevinEntity;
+    bool _haveEntities;
+
+    bool _chaosActive;
+    OrbitalParams2D _preChaosOrb;
+    LangevinParams2D _preChaosLangevin;
+
     // Cycle order
     static readonly OrbitalKind2D[] kOrder = new[]
     {
@@ -104,9 +113,109 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         }
     }
 
+    [Serializable]
+    public struct ChaosPreset
+    {
+        public float Diffusion;
+        public float ForceAccel;
+        public float VelocityDamping;
+        public float MaxSpeed;
+        public float DtScale;
+    }
+
+    [Header("Chaos Settings (for end animation)")]
+    public ChaosPreset chaosPreset = new ChaosPreset
+    {
+        Diffusion = 60f,
+        ForceAccel = 50f,
+        VelocityDamping = 0f,
+        MaxSpeed = 200f,
+        DtScale = 20f
+    };
+
+    public static void EnterChaosMode()
+    {
+        var inst = Instance;
+
+        if (inst == null || !inst._ready || !inst._haveEntities)
+        {
+            Debug.Log((inst == null) + " + " + !inst._ready + " + " + !inst._haveEntities);
+            Debug.LogWarning("[OrbitalPresetCycler] EnterChaosMode() but not ready.");
+            return;
+        }
+
+        if (inst._chaosActive)
+        {
+            Debug.Log("already in chaosmode");
+            return; // already in chaos
+        }
+
+
+        var em = inst._em;
+
+        // Snapshot current params
+        var op = em.GetComponentData<OrbitalParams2D>(inst._orbitalEntity);
+        var lp = em.GetComponentData<LangevinParams2D>(inst._langevinEntity);
+        inst._preChaosOrb = op;
+        inst._preChaosLangevin = lp;
+        inst._chaosActive = true;
+
+        // 1) Disable orbital structure
+        op.Kind = OrbitalKind2D.None;
+        op.Type = OrbitalKind2D.None;  // keep alias in sync
+        op.DriftClamp = 0f;
+        op.ScoreClamp = 0f;
+        op.Exposure = 0f;
+
+        // 2) Pump up diffusion & relax damping for chaos
+        lp.Diffusion = inst.chaosPreset.Diffusion;
+        lp.DtScale = inst.chaosPreset.DtScale;
+        lp.MaxSpeed = inst.chaosPreset.MaxSpeed;
+        lp.ForceAccel = 0f;                       // no guided drift
+        lp.VelocityDamping = inst.chaosPreset.VelocityDamping;
+
+
+        em.SetComponentData(inst._orbitalEntity, op);
+        em.SetComponentData(inst._langevinEntity, lp);
+
+        if (inst.Orbitalname != null) inst.Orbitalname.text = "Chaos";
+        if (inst.OrbitalnameFlipped != null) inst.OrbitalnameFlipped.text = "Chaos";
+
+        Debug.Log("[OrbitalPresetCycler] Chaos mode ENTER");
+    }
+
+    public static void ExitChaosMode()
+    {
+        var inst = Instance;
+        if (inst == null || !inst._chaosActive || !inst._haveEntities)
+            return;
+
+        var em = inst._em;
+
+        // Restore previous orbital & Langevin params
+        em.SetComponentData(inst._orbitalEntity, inst._preChaosOrb);
+        em.SetComponentData(inst._langevinEntity, inst._preChaosLangevin);
+
+        inst._chaosActive = false;
+
+        // Also restore UI label based on current Kind
+        var kind = inst._preChaosOrb.Kind;
+        if (inst.Orbitalname != null)
+            inst.Orbitalname.text = GetOrbitalLabel(kind);
+        if (inst.OrbitalnameFlipped != null)
+            inst.OrbitalnameFlipped.text = GetOrbitalLabel(kind);
+
+        Debug.Log("[OrbitalPresetCycler] Chaos mode EXIT");
+    }
+
+
+
+
+
     // runtime
     EntityManager _em;
     EntityQuery _orbQ;
+    EntityQuery _langevinQ;   // <--- ADD THIS
     bool _ready;
     int _idx;
 
@@ -182,14 +291,30 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         if (world == null) return;
 
         _em = world.EntityManager;
-        _orbQ = _em.CreateEntityQuery(ComponentType.ReadWrite<OrbitalParams2D>());
 
+        // Query for the orbital params singleton
+        _orbQ = _em.CreateEntityQuery(ComponentType.ReadWrite<OrbitalParams2D>());
         if (_orbQ.IsEmptyIgnoreFilter)
-            return; // SubScene might still be streaming
+        {
+            // SubScene might still be streaming
+            return;
+        }
+
+        // Query for the Langevin params singleton
+        _langevinQ = _em.CreateEntityQuery(ComponentType.ReadWrite<LangevinParams2D>());
+        if (_langevinQ.IsEmptyIgnoreFilter)
+        {
+            // Langevin system not ready yet
+            return;
+        }
+
+        // Cache the singleton entities used by chaos mode
+        _orbitalEntity = GetOrbitalEntity();                   // already uses _orbQ
+        _langevinEntity = _langevinQ.GetSingletonEntity();
+        _haveEntities = true;
 
         // Seed index from current Kind/Type
-        var e = GetOrbitalEntity();
-        var op = _em.GetComponentData<OrbitalParams2D>(e);
+        var op = _em.GetComponentData<OrbitalParams2D>(_orbitalEntity);
 
         _idx = 0;
         for (int i = 0; i < kOrder.Length; i++)
@@ -215,12 +340,11 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         if (Orbitalname != null && _idx >= 0 && _idx < kOrder.Length)
             Orbitalname.text = GetOrbitalLabel(kOrder[_idx]);
 
-        // Set initial UI label based on current orbital
         if (OrbitalnameFlipped != null && _idx >= 0 && _idx < kOrder.Length)
             OrbitalnameFlipped.text = GetOrbitalLabel(kOrder[_idx]);
 
         _ready = true;
-        Debug.Log("[OrbitalPresetCycler] Ready. Use Left/Right (or A/D) to switch orbitals.");
+        Debug.Log($"[OrbitalPresetCycler] Ready. (haveEntities={_haveEntities})");
 
         // If someone called ForcePreset() before we were ready, honour it now.
         if (_hasPendingForce)
@@ -232,11 +356,12 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         }
     }
 
+
     Entity GetOrbitalEntity()
     {
         if (_orbQ.CalculateEntityCount() == 1)
             return _orbQ.GetSingletonEntity();
-
+        
         using var arr = _orbQ.ToEntityArray(Allocator.Temp);
         return arr[0];
     }

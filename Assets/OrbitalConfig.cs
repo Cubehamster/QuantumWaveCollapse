@@ -4,6 +4,7 @@ using Unity.Mathematics;
 
 public enum OrbitalKind2D
 {
+    None,   // <--- NEW: means "no orbital, pure diffusion"
     // s & p (you already have some of these)
     OneS,
     TwoS,
