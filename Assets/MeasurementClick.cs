@@ -146,6 +146,8 @@ public sealed class MeasurementClick : MonoBehaviour
 
     public bool p2mirrored = false;
 
+    public bool playersFlipped = false;
+
     // ---------------- ECS fields ----------------
 
     EntityManager _em;
@@ -865,6 +867,10 @@ public sealed class MeasurementClick : MonoBehaviour
             }
 
             Vector2 screenP1 = cursorP1.ScreenPosition;
+           
+            if (playersFlipped)
+                screenP1.x = Screen.width - screenP1.x;
+
             worldP1 = ScreenToWorldXY(screenP1, planeZ);
 
             if (AimCursorPlayer1 != null)
@@ -898,7 +904,8 @@ public sealed class MeasurementClick : MonoBehaviour
                 Vector2 screenP2 = cursorP2.ScreenPosition;
 
                 // Mirror horizontally around the center of the screen
-                screenP2.x = Screen.width - screenP2.x;
+                if(!playersFlipped)
+                    screenP2.x = Screen.width - screenP2.x;
 
                 // Convert mirrored screen coords to world
                 worldP2 = ScreenToWorldXY(screenP2, planeZ);
@@ -1555,5 +1562,10 @@ public sealed class MeasurementClick : MonoBehaviour
             Vector3 p = r.origin + t * r.direction;
             return new float2(p.x, p.y);
         }
+    }
+
+    public void FlipPlayers()
+    {
+        playersFlipped = !playersFlipped;
     }
 }

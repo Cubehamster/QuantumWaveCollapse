@@ -22,7 +22,8 @@ public class SetPayload
     public float? timer;
     public int? difficulty;
     public int? numplayers;
-    public string lang;   // NEW
+    public string lang;   
+    public bool? flipplayers;
 }
 
 [Serializable]
@@ -32,6 +33,6 @@ public class InfPayload
     public int? hits;
     public int? misses;
     public float? timeLeft;
-    public int? score;    // NEW
+    public int? score;   
 }
 

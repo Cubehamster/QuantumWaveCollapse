@@ -3,8 +3,11 @@ using System.Threading.Tasks;
 using TMPro;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Entities.UniversalDelegates;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 
 public enum SquidStage
 {
@@ -54,6 +57,7 @@ public class SquidGameController : MonoBehaviour
 
     [Tooltip("The TextMeshProUGUI that displays 'Get Ready', '3, 2, 1' etc.")]
     [SerializeField] private TextMeshProUGUI countdownLabel;
+    [SerializeField] private TextMeshProUGUI countdownLabelFlipped;
 
     [SerializeField] private StabilityUI StabilityUI;
 
@@ -82,6 +86,11 @@ public class SquidGameController : MonoBehaviour
     private float _timeLeft;
     private int _numPlayers = 1; // default until server tells us
 
+    // Pending stage change requested from MQTT (background thread)
+    // Applied on the main thread in Update()
+    private bool _hasPendingStageFromServer;
+    private SquidStage _pendingStageFromServer;
+
     public SquidStage CurrentStage => _currentStage;
 
     // Game-end tracking so we don’t finish twice
@@ -96,6 +105,8 @@ public class SquidGameController : MonoBehaviour
 
     // Solved state coroutine handle
     private Coroutine _solvedRoutine;
+
+    public Volume Darken;
 
     // ---------------- Intro tutorial internal state (runs inside Active) ----------------
 
@@ -124,6 +135,8 @@ public class SquidGameController : MonoBehaviour
 
     // Optional: skip tutorial on subsequent entries to Active
     private bool _introTutorialCompleted;
+
+    public SquidMqttClient Mqtt;
 
     private void Awake()
     {
@@ -157,7 +170,24 @@ public class SquidGameController : MonoBehaviour
 
     private void Update()
     {
-        // Track remaining time from Timer and end game when it hits 0
+        // ----------------------------------------------------
+        // Apply any pending stage change from MQTT on main thread
+        // ----------------------------------------------------
+        if (_hasPendingStageFromServer)
+        {
+            _hasPendingStageFromServer = false;
+
+            // Apply stage locally (no MQTT inside ApplyStageImmediately)
+            ApplyStageImmediately(_pendingStageFromServer, sendMqtt: false);
+
+            // Echo back to server that we've changed stage, with trig="server"
+            if (_mqtt != null)
+                _ = SendStageUpdateAsync("server");
+        }
+
+        // ----------------------------------------------------
+        // Existing timer logic
+        // ----------------------------------------------------
         if (_currentStage == SquidStage.Active && !_gameEnded && _timerStarted && Timer != null)
         {
             _timeLeft = Timer.remaining;
@@ -167,7 +197,10 @@ public class SquidGameController : MonoBehaviour
                 OnGameTimerFinished();
             }
         }
+
+        DebugKeyStageSwitch();
     }
+
 
     // =========================================================
     //  MQTT callbacks & stage changes from server
@@ -178,11 +211,15 @@ public class SquidGameController : MonoBehaviour
         if (!Enum.TryParse(stageName, true, out SquidStage newStage))
             return;
 
-        ApplyStageImmediately(newStage, sendMqtt: false);
+        // Just mark a pending change – don't touch ECS / EntityManager here.
+        _pendingStageFromServer = newStage;
+        _hasPendingStageFromServer = true;
 
-        if (_mqtt != null)
-            await SendStageUpdateAsync("server");
+        // Nothing else to do here; the actual ApplyStageImmediately + MQTT echo
+        // will be done on the main thread in Update().
+        await Task.CompletedTask;
     }
+
 
     public async Task ApplySettingsFromServer(float? timer, int? difficulty, int? numplayers)
     {
@@ -253,15 +290,15 @@ public class SquidGameController : MonoBehaviour
         {
             case SquidStage.Idle:
                 EnterIdle();
-                break;
-            case SquidStage.Intro:
-                EnterIntro();
+            //    break;
+            //case SquidStage.Intro:
+            //    EnterIntro();
                 break;
             case SquidStage.Active:
                 EnterActive();
-                break;
-            case SquidStage.Solved:
-                EnterSolved();
+            //    break;
+            //case SquidStage.Solved:
+            //    EnterSolved();
                 break;
         }
 
@@ -273,6 +310,12 @@ public class SquidGameController : MonoBehaviour
 
     private void EnterIdle()
     {
+        ActualParticlePoolSystem.CurrentActive = 0;
+        Darken.weight = 1.0f;
+        Timer.remaining = 0;
+        TimerFlipped.remaining = 0; 
+        Timer.timerText.text = string.Empty;
+        TimerFlipped.timerText.text = string.Empty;
         Debug.Log("[SQUID] EnterIdle");
 
         _gameEnded = false;
@@ -307,7 +350,7 @@ public class SquidGameController : MonoBehaviour
     private void EnterIntro()
     {
         Debug.Log("[SQUID] EnterIntro (practice)");
-
+        Darken.weight = 0.0f;
         _gameEnded = false;
         _timerStarted = false;
 
@@ -337,9 +380,11 @@ public class SquidGameController : MonoBehaviour
     private void EnterActive()
     {
         Debug.Log("[SQUID] EnterActive");
-
+        ActualParticlePoolSystem.CurrentActive = 0;
+        Darken.weight = 0.0f;
         _gameEnded = false;
         _timerStarted = false;
+        _introTutorialCompleted = false;
 
         // Ensure chaos is off and forces are clean
         OrbitalPresetCycler.ExitChaosMode();
@@ -389,7 +434,7 @@ public class SquidGameController : MonoBehaviour
     private void EnterSolved()
     {
         Debug.Log("[SQUID] EnterSolved");
-
+        Darken.weight = 0.0f;
         _timerStarted = false;
 
         SetMeasurementEnabled(false);
@@ -454,6 +499,9 @@ public class SquidGameController : MonoBehaviour
             countdownLabel.text = _finalStable
                 ? "SYSTEM STABALIZED"
                 : "SYSTEM COLLAPSE";
+            countdownLabelFlipped.text = _finalStable
+                ? "SYSTEM STABALIZED"
+                : "SYSTEM COLLAPSE";
         }
 
         // 4) Stay in Solved for 60 seconds
@@ -472,7 +520,7 @@ public class SquidGameController : MonoBehaviour
         // 6) Make sure chaos is OFF before next run, then back to Idle
         OrbitalPresetCycler.ExitChaosMode();
 
-        ApplyStageImmediately(SquidStage.Idle, sendMqtt: true);
+        ApplyStageImmediately(SquidStage.Idle, sendMqtt: false);
         _solvedRoutine = null;
     }
 
@@ -586,7 +634,7 @@ public class SquidGameController : MonoBehaviour
         float score = 0f;
         if (sum > 0)
         {
-            score = ((float)good + 0.5f * unk + 0.1f * bad) / sum;
+            score = ((float)good + 0.6f * unk + 0.1f * bad) / sum;
         }
         else
         {
@@ -594,7 +642,7 @@ public class SquidGameController : MonoBehaviour
             score = 1f;
         }
 
-        int stableFlag = score >= 0.75f ? 1 : 0;
+        int stableFlag = score >= 0.70f ? 1 : 0;
 
         _finalScore = score;
         _finalStable = (stableFlag == 1);
@@ -616,7 +664,7 @@ public class SquidGameController : MonoBehaviour
             StabilityUI.spawningEnabled = false;
 
         // Move to solved stage (local)
-        ApplyStageImmediately(SquidStage.Solved, sendMqtt: false);
+        ApplyStageImmediately(SquidStage.Solved, sendMqtt: true);
 
         // MQTT game end message (score 0/1)
         _ = PublishGameEndAsync(stableFlag);
@@ -801,7 +849,11 @@ public class SquidGameController : MonoBehaviour
 
         // Step 1: "Get Ready"
         if (countdownLabel != null)
+        {
             countdownLabel.text = "Get Ready";
+            countdownLabelFlipped.text = "Get Ready";
+        }
+
 
         yield return new WaitForSeconds(1f);
 
@@ -809,14 +861,22 @@ public class SquidGameController : MonoBehaviour
         for (int n = 3; n >= 1; n--)
         {
             if (countdownLabel != null)
+            {
                 countdownLabel.text = n.ToString();
+                countdownLabelFlipped.text = n.ToString();
+            }
+
 
             yield return new WaitForSeconds(1f);
         }
 
         // Clear label
         if (countdownLabel != null)
+        {
             countdownLabel.text = string.Empty;
+            countdownLabelFlipped.text = string.Empty;
+        }
+
 
         // Fade out overlay
         if (countdownOverlay != null)
@@ -972,7 +1032,11 @@ public class SquidGameController : MonoBehaviour
     {
         SetCanvasGroupImmediate(countdownOverlay, 0f, false);
         if (countdownLabel != null)
+        {
             countdownLabel.text = string.Empty;
+            countdownLabelFlipped.text = string.Empty;
+        }
+
     }
 
     private void SetCanvasGroupImmediate(CanvasGroup cg, float alpha, bool active)
@@ -1054,6 +1118,68 @@ public class SquidGameController : MonoBehaviour
             }
         }
     }
+
+    private void DebugKeyStageSwitch()
+    {
+        if (Input.GetKeyDown(KeyCode.Alpha1))
+        {
+            Debug.Log("[DEBUG] Switched to Idle (1)");
+            ApplyStageImmediately(SquidStage.Idle, sendMqtt: false);
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha2))
+        {
+            Debug.Log("[DEBUG] Switched to Intro (2)");
+            ApplyStageImmediately(SquidStage.Intro, sendMqtt: false);
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha3))
+        {
+            Debug.Log("[DEBUG] Switched to Active (3)");
+            ApplyStageImmediately(SquidStage.Active, sendMqtt: false);
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha4))
+        {
+            Debug.Log("[DEBUG] Switched to Solved (4)");
+            ApplyStageImmediately(SquidStage.Solved, sendMqtt: false);
+        }
+        else if (Input.GetKeyDown(KeyCode.F))
+        {
+            bool newValue = !measurementClick.playersFlipped;
+            ApplyFlipPlayers(newValue);
+            Debug.Log("[DEBUG] Toggled FlipPlayers → " + newValue);
+        }
+        else if (Input.GetKeyDown(KeyCode.Minus))
+        {
+            Mqtt.enabled = false;
+            Mqtt.MQTTActive = false;
+            Debug.Log("[DEBUG] MQTT → " + false);
+        }
+        else if (Input.GetKeyDown(KeyCode.Equals))
+        {
+            Mqtt.enabled = true;
+            Mqtt.MQTTActive = true;
+            Debug.Log("[DEBUG] MQTT → " + true);
+        }
+    }
+
+    public void ApplyFlipPlayers(bool enable)
+    {
+        if (measurementClick == null)
+            measurementClick = FindObjectOfType<MeasurementClick>();
+
+        if (measurementClick == null)
+        {
+            Debug.LogWarning("[SQUID] Tried to flip players, but MeasurementClick is missing!");
+            return;
+        }
+
+        // Only set if different, avoid unnecessary toggles
+        if (measurementClick.playersFlipped != enable)
+        {
+            measurementClick.playersFlipped = enable;
+            Debug.Log("[SQUID] Players flipped: " + enable);
+        }
+    }
+
 
     /// <summary>
     /// Hard reset all ECS Force components so cursors can't keep pushing

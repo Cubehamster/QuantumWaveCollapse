@@ -207,7 +207,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   center: {x: 0, y: 0}
-  extents: {x: 910, y: 513}
+  extents: {x: 850, y: 460}
 --- !u!114 &1933164177
 MonoBehaviour:
   m_ObjectHideFlags: 0

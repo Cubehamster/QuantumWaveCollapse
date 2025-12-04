@@ -34,7 +34,7 @@ public class StabilityUI : MonoBehaviour
         int unk = ActualParticlePoolSystem.CurrentActive - bad - good;
 
         int sum = bad + good + unk;
-        score = ((float)good + 0.5f * unk + 0.1f * bad) / sum;
+        score = ((float)good + 0.6f * unk + 0.1f * bad) / sum;
         float TargetGood = 400f * score;
 
         if (sum > 0)
@@ -49,7 +49,7 @@ public class StabilityUI : MonoBehaviour
             GoodBarFlipped.Width = 0;
         }
 
-        if (Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f) < 0.75 * 400f && sum != 0)
+        if (Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f) < 0.70 * 400f && sum != 0)
         {
             Status.text = "status: unstable";
             StatusFlipped.text = "status: unstable";

@@ -21,7 +21,7 @@ MonoBehaviour:
     m_Value: 1
   intensity:
     m_OverrideState: 1
-    m_Value: 6.29
+    m_Value: 2
   scatter:
     m_OverrideState: 1
     m_Value: 0.28
@@ -59,7 +59,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 66f335fb1ffd8684294ad653bf1c7564, type: 3}
   m_Name: ColorAdjustments
   m_EditorClassIdentifier: 
-  active: 1
+  active: 0
   postExposure:
     m_OverrideState: 0
     m_Value: 0
@@ -67,8 +67,8 @@ MonoBehaviour:
     m_OverrideState: 0
     m_Value: 0
   colorFilter:
-    m_OverrideState: 0
-    m_Value: {r: 1.0196079, g: 1.0654904, b: 1.8666667, a: 1}
+    m_OverrideState: 1
+    m_Value: {r: 0.41476625, g: 0.41799012, b: 0.4702163, a: 1}
   hueShift:
     m_OverrideState: 0
     m_Value: 0

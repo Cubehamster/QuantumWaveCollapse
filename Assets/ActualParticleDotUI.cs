@@ -64,6 +64,7 @@ public sealed class ActualParticleDotUI : MonoBehaviour
     // Dot pool (1 dot per *slot index*, no compression)
     readonly List<RectTransform> _dotRects = new();
     readonly List<Shapes.Disc> _dotDiscs = new();
+    readonly List<Shapes.Disc> _dotDiscOutline = new();
 
     struct FadeState
     {
@@ -235,6 +236,7 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         {
             var rt = _dotRects[slot];
             var disc = _dotDiscs[slot];
+            var outline = _dotDiscOutline[slot];
 
             bool hasPosition = (posArray != null && slot < posArray.Length);
             Entity walker = Entity.Null;
@@ -252,6 +254,7 @@ public sealed class ActualParticleDotUI : MonoBehaviour
             if (walker == Entity.Null)
             {
                 disc.Color = Color.clear;
+                outline.Color = Color.clear;
                 continue;
             }
 
@@ -306,6 +309,8 @@ public sealed class ActualParticleDotUI : MonoBehaviour
             float radiusMul = highlight ? highlightSizeMultiplier : 1f;
 
             disc.Color = finalColor;
+
+            outline.Color = new Color(0,0,0, alphaFactor);
             disc.Radius = 0.5f * dotDiameter * radiusMul;
 
         }
@@ -407,16 +412,34 @@ public sealed class ActualParticleDotUI : MonoBehaviour
             typeof(Shapes.Disc),
             typeof(BoingBehavior));
 
+        GameObject outlineGO = new GameObject(
+            "outline",
+            typeof(CanvasRenderer),
+            typeof(RectTransform),
+            typeof(Shapes.Disc),
+            typeof(BoingBehavior));
+
+        outlineGO.transform.SetParent(parentGO.transform, false);
         discGO.transform.SetParent(parentGO.transform, false);
 
         var disc = discGO.GetComponent<Shapes.Disc>();
         disc.Radius = dotDiameter * 0.5f;
         disc.Color = unknownColor;
 
+        var outline = outlineGO.GetComponent<Shapes.Disc>();
+        outline.Color = Color.black;
+        outline.Type = Shapes.DiscType.Ring;
+        outline.Thickness = 5;
+        outline.Radius = dotDiameter * 0.5f;
+
         var boing = discGO.GetComponent<BoingBehavior>();
         boing.LockTranslationZ = true;
 
+        var boing2 = outline.GetComponent<BoingBehavior>();
+        boing2.LockTranslationZ = true;
+
         _dotRects.Add(parentRT);
         _dotDiscs.Add(disc);
+        _dotDiscOutline.Add(outline);
     }
 }

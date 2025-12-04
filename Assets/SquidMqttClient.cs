@@ -1,12 +1,13 @@
-using System;
-using System.Net;
-using System.Text;
-using System.Threading.Tasks;
 using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
 using Newtonsoft.Json;
+using System;
+using System.Net;
+using System.Text;
+using System.Threading.Tasks;
 using UnityEngine;
+using static UnityEngine.Rendering.DebugUI;
 
 public class SquidMqttClient : MonoBehaviour
 {
@@ -25,7 +26,7 @@ public class SquidMqttClient : MonoBehaviour
 
     // Latest received language (default English)
     public string CurrentLanguage { get; private set; } = "en";
-
+    public bool MQTTActive = true;
     private async void Start()
     {
         await ConnectAndSubscribeAsync();
@@ -56,12 +57,12 @@ public class SquidMqttClient : MonoBehaviour
                     .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
                     .Build());
 
-            // Subscribe to quant/# for general messages
-            await _client.SubscribeAsync(
-                new MqttTopicFilterBuilder()
-                    .WithTopic(_rootTopic + "/#")
-                    .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
-                    .Build());
+            //// Subscribe to quant/# for general messages
+            //await _client.SubscribeAsync(
+            //    new MqttTopicFilterBuilder()
+            //        .WithTopic(_rootTopic + "/#")
+            //        .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+            //        .Build());
 
             Debug.Log("[MQTT] Subscribed to quant/squid/# and quant/#");
 
@@ -75,6 +76,8 @@ public class SquidMqttClient : MonoBehaviour
 
     private Task OnMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs e)
     {
+        if (!MQTTActive)
+            return null;
         try
         {
             var topic = e.ApplicationMessage.Topic;
@@ -136,6 +139,14 @@ public class SquidMqttClient : MonoBehaviour
             Debug.Log("[MQTT] Language set to " + CurrentLanguage);
 
             controller.SetLanguageFromServer(CurrentLanguage);
+        }
+
+        // NEW: Flip Players remotely
+        if (msg.set.flipplayers.HasValue)
+        {
+            bool value = msg.set.flipplayers.Value;
+            Debug.Log("[MQTT] FlipPlayers command received: " + value);
+            controller.ApplyFlipPlayers(value);
         }
     }
 
