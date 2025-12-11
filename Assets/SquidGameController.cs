@@ -296,9 +296,9 @@ public class SquidGameController : MonoBehaviour
                 break;
             case SquidStage.Active:
                 EnterActive();
-            //    break;
-            //case SquidStage.Solved:
-            //    EnterSolved();
+                break;
+            case SquidStage.Solved:
+                EnterSolved();
                 break;
         }
 
