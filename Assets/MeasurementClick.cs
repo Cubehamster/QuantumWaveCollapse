@@ -939,9 +939,9 @@ public sealed class MeasurementClick : MonoBehaviour
         var ctrlRef = SquidGameController.Instance;
         if (ctrlRef != null && ctrlRef.CurrentStage == SquidStage.Active)
         {
-            if (edgeDownP1 || movedP1)
+            if (edgeDownP1)
                 ctrlRef.NotifyIntroClick(1);
-            if (edgeDownP2 || movedP2)
+            if (edgeDownP2)
                 ctrlRef.NotifyIntroClick(2);
         }
 

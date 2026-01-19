@@ -39,17 +39,55 @@ public class SquidGameController : MonoBehaviour
     [SerializeField] private float idleOrbitalInterval = 10f;
 
     [Header("Intro Tutorial UI")]
-    [Tooltip("CanvasGroup for the mirrored 'Scan to Identify' text on Player 1 side.")]
-    [SerializeField] private CanvasGroup scanP1Text;
+    [Tooltip("CanvasGroup for the mirrored 'Blue Ready' text on Player 1 side.")]
+    [SerializeField] private CanvasGroup SyncingBlueReady;
 
-    [Tooltip("CanvasGroup for the mirrored 'Scan to Identify' text on Player 2 side.")]
-    [SerializeField] private CanvasGroup scanP2Text;
+    [Tooltip("CanvasGroup for the mirrored 'Pink Ready' text on Player 2 side.")]
+    [SerializeField] private CanvasGroup SyncingPinkReady;
 
-    [Tooltip("CanvasGroup for the 'Keep Green Particles' TextMeshPro.")]
-    [SerializeField] private CanvasGroup keepGreenText;
+    [Tooltip("CanvasGroup for the 'Sync Blue' TextMeshPro.")]
+    [SerializeField] private CanvasGroup SyncTextBlue;
 
-    [Tooltip("CanvasGroup for the 'Destroy Red Particles' TextMeshPro.")]
-    [SerializeField] private CanvasGroup destroyRedText;
+    [Tooltip("CanvasGroup for the 'Sync Red' TextMeshPro.")]
+    [SerializeField] private CanvasGroup SyncTextPink;
+
+    [Tooltip("CanvasGroup for the 'Scanning Instructions' TextMeshPro.")]
+    [SerializeField] private CanvasGroup ScanningInstructions;
+
+    [Tooltip("CanvasGroup for the 'TrainingStep 1' TextMeshPro.")]
+    [SerializeField] private CanvasGroup TrainingStep1;
+
+    [Tooltip("CanvasGroup for the 'TrainingStep 2' TextMeshPro.")]
+    [SerializeField] private CanvasGroup TrainingStep2;
+
+    [Tooltip("CanvasGroup for the 'TrainingStep 3' TextMeshPro.")]
+    [SerializeField] private CanvasGroup TrainingStep3;
+
+    [Tooltip("CanvasGroup for the 'TrainingStep 4' TextMeshPro.")]
+    [SerializeField] private CanvasGroup TrainingStep4;
+
+    [Tooltip("CanvasGroup for the 'TrainingStep 5' TextMeshPro.")]
+    [SerializeField] private CanvasGroup TrainingStep5;
+
+    [Tooltip("CanvasGroup for the 'Objective 1 Initiating' TextMeshPro.")]
+    [SerializeField] private CanvasGroup Objective1Initiating;
+
+    [Tooltip("The TextMeshProUGUI that displays 'Standby...' etc.")]
+    [SerializeField] private TextMeshProUGUI StandbyText;
+    [SerializeField] private TextMeshProUGUI StandbyFliptext;
+
+    [Tooltip("CanvasGroup for the 'Swap Human' TextMeshPro.")]
+    [SerializeField] private CanvasGroup SwapHuman;
+
+    [Tooltip("The TextMeshProUGUI that displays 'Swap Human...' etc.")]
+    [SerializeField] private TextMeshProUGUI SwapHumanText;
+    [SerializeField] private TextMeshProUGUI SwapHumanFlippedText;
+
+    [Tooltip("CanvasGroup for the 'Objective 1' TextMeshPro.")]
+    [SerializeField] private CanvasGroup Objective1;
+
+    [Tooltip("CanvasGroup for the 'Objective 2' TextMeshPro.")]
+    [SerializeField] private CanvasGroup Objective2;
 
     [Header("Intro Countdown UI")]
     [Tooltip("CanvasGroup for the overlay countdown (e.g., background + text).")]
@@ -65,8 +103,12 @@ public class SquidGameController : MonoBehaviour
     [Tooltip("Warmup time AFTER both players have clicked/moved at least once.")]
     [SerializeField] private float introWarmupDuration = 3f;
 
+    [Header("Intro Timings")]
+    [Tooltip("Scanning Explanation.")]
+    [SerializeField] private float ScanningInstructionDuration = 20f;
+
     [Tooltip("How long to show 'Keep Green Particles' before resetting the Actual to Unknown.")]
-    [SerializeField] private float introKeepGreenDuration = 6f;
+    [SerializeField] private float Training2Duration = 7f;
 
     [Tooltip("Fade duration for tutorial texts.")]
     [SerializeField] private float introFadeDuration = 0.5f;
@@ -161,6 +203,12 @@ public class SquidGameController : MonoBehaviour
 
         // Apply initial local stage behaviour
         ApplyStageImmediately(_currentStage, sendMqtt: false);
+
+        StabilityUI.FadeStability(0, 0.0f);
+        HideAllTutorialTextImmediate();
+        ClearCountdownUIImmediate();
+
+        OrbitalPresetCycler.EnterIdleMode(idleOrbitalInterval);
 
         // Initial connection + stage report
         if (_mqtt != null)
@@ -292,9 +340,6 @@ public class SquidGameController : MonoBehaviour
         {
             case SquidStage.Idle:
                 EnterIdle();
-            //    break;
-            //case SquidStage.Intro:
-            //    EnterIntro();
                 break;
             case SquidStage.Active:
                 EnterActive();
@@ -318,6 +363,8 @@ public class SquidGameController : MonoBehaviour
         TimerFlipped.remaining = 0; 
         Timer.timerText.text = string.Empty;
         TimerFlipped.timerText.text = string.Empty;
+        StabilityUI.FadeStability(0.0f, 0.5f);
+        MeasurementClick.ClickLocked = true;
         Debug.Log("[SQUID] EnterIdle");
 
         _gameEnded = false;
@@ -336,36 +383,6 @@ public class SquidGameController : MonoBehaviour
 
         SetCrosshairP1(false);
         SetCrosshairP2(false);
-
-        if (StabilityUI != null)
-        {
-            StabilityUI.spawningEnabled = false;
-            StabilityUI.FadeStability(0, 0.1f);
-        }
-
-        HideAllTutorialTextImmediate();
-        ClearCountdownUIImmediate();
-
-        OrbitalPresetCycler.EnterIdleMode(idleOrbitalInterval);
-    }
-
-    private void EnterIntro()
-    {
-        Debug.Log("[SQUID] EnterIntro (practice)");
-        IdleOverlay.alpha = 0.0f;
-        _gameEnded = false;
-        _timerStarted = false;
-
-        // Ensure chaos mode & forces are reset
-        OrbitalPresetCycler.ExitChaosMode();
-        ZeroAllForces();
-
-        ActualParticlePoolSystem.RequestClearAll();
-
-        SetMeasurementEnabled(true);
-        MeasurementClick.ClickLocked = false;
-        SetCrosshairP1(true);
-        SetCrosshairP2(true);
 
         if (StabilityUI != null)
         {
@@ -405,12 +422,12 @@ public class SquidGameController : MonoBehaviour
         SetCrosshairP1(true);
         SetCrosshairP2(true);
 
+        StabilityUI.FadeStability(0, 0f);
+
         if (StabilityUI != null)
         {
             StabilityUI.spawningEnabled = false;
-            StabilityUI.FadeStability(1, 2f);
         }
-
         HideAllTutorialTextImmediate();
         ClearCountdownUIImmediate();
 
@@ -685,18 +702,41 @@ public class SquidGameController : MonoBehaviour
         _introP1Clicked = false;
         _introP2Clicked = false;
 
+        yield return FadeCanvasGroup(SyncTextBlue, 1.0f, 0.5f);
+        yield return FadeCanvasGroup(SyncTextPink, 1.0f, 0.5f);
+
         Debug.Log("[Intro] Warmup: waiting for both players to click/move at least once.");
 
         // Wait until both have interacted
         while (!(_introP1Clicked && _introP2Clicked) && _currentStage == SquidStage.Active)
         {
+            if (_introP1Clicked)
+            {
+                yield return FadeCanvasGroup(SyncTextPink, 0.0f, 1.0f);
+                yield return new WaitForSeconds(1.0f);
+                yield return FadeCanvasGroup(SyncingPinkReady, 1.0f, 1f);
+            }
+
+            if (_introP2Clicked)
+            {
+                yield return FadeCanvasGroup(SyncTextBlue, 0.0f, 0.5f);
+                yield return new WaitForSeconds(1.0f);
+                yield return FadeCanvasGroup(SyncingBlueReady, 1.0f, 1f);
+            }
             yield return null;
         }
+
+        yield return new WaitForSeconds(1.0f);
 
         if (_currentStage != SquidStage.Active)
             yield break;
 
         Debug.Log("[Intro] Both players have interacted. Warmup timer starts.");
+
+        yield return FadeCanvasGroup(SyncingPinkReady, 0.0f, 1f);
+        yield return FadeCanvasGroup(SyncingBlueReady, 0.0f, 1f);
+
+        yield return new WaitForSeconds(1.0f);
 
         float warmupRemaining = introWarmupDuration;
         while (warmupRemaining > 0f && _currentStage == SquidStage.Active)
@@ -708,11 +748,21 @@ public class SquidGameController : MonoBehaviour
         if (_currentStage != SquidStage.Active)
             yield break;
 
-        // ---------------------------------------------------------
-        // Phase 1: spawn 1 UNKNOWN Actual, disable P1, P2 scans to identify (forced Good)
-        // ---------------------------------------------------------
-        Debug.Log("[Intro] Phase 1: Spawn single UNKNOWN Actual, P1 disabled, P2 scans to identify (Good).");
+        // Scanning Instructions
+        yield return FadeCanvasGroup(ScanningInstructions, 1.0f, 1f);
 
+        float scanningIntructionTimeRemaining = ScanningInstructionDuration;
+        while (scanningIntructionTimeRemaining > 0f && _currentStage == SquidStage.Active)
+        {
+            scanningIntructionTimeRemaining -= Time.deltaTime;
+            yield return null;
+        }
+
+        yield return FadeCanvasGroup(ScanningInstructions, 0.0f, 0.5f);
+        yield return new WaitForSeconds(0.5f);
+
+        // Training Step 1:
+        Debug.Log("[Trainingstep 1]");
         // Tutorial: no extra spawns from Good identify or coop destroy.
         ActualParticlePoolSystem.SetTutorialSpawnSuppression(
             suppressIdentify: true,
@@ -721,7 +771,7 @@ public class SquidGameController : MonoBehaviour
 
         // Spawn exactly one UNKNOWN (no pre-set Bad status)
         ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-
+        SetMeasurementEnabled(true);
         SetCrosshairP1(false);
         SetCrosshairP2(true);
 
@@ -730,7 +780,7 @@ public class SquidGameController : MonoBehaviour
         _introPhase = IntroPhase.WaitingForFirstIdentify;
 
         // Fade in scan text
-        yield return FadeCanvasGroup(scanP1Text, 1f, introFadeDuration);
+        yield return FadeCanvasGroup(TrainingStep1, 1.0f, 1.0f);
 
         // Wait until OnActualIdentified() moves us on
         while (_currentStage == SquidStage.Active &&
@@ -745,24 +795,28 @@ public class SquidGameController : MonoBehaviour
         if (_introPhase != IntroPhase.AfterFirstIdentify)
             yield break;
 
-        // ---------------------------------------------------------
-        // Phase 2: show "Keep Green Particles"
-        // ---------------------------------------------------------
-        Debug.Log("[Intro] First Actual identified as GOOD. Showing 'Keep Green Particles'.");
+        yield return FadeCanvasGroup(TrainingStep1, 0.0f, 0.5f);
+        yield return new WaitForSeconds(0.5f);
 
-        yield return FadeCanvasGroup(keepGreenText, 1f, introFadeDuration);
+        //Trainingstep 2:
+        Debug.Log("[Trainingstep 2]");
+        StabilityUI.FadeStability(1.0f, 0.5f);
+        yield return FadeCanvasGroup(TrainingStep2, 1.0f, 1.0f);
+
         SetMeasurementEnabled(false);
+        SetCrosshairP1(false);
         SetCrosshairP2(false);
-        yield return new WaitForSeconds(introKeepGreenDuration);
+        yield return new WaitForSeconds(Training2Duration);
+
+        yield return FadeCanvasGroup(TrainingStep2, 0.0f, 0.5f);
+        yield return new WaitForSeconds(0.5f);
 
         // Turn any Good Actuals back to Unknown (tutorial-only behaviour)
         ForceAllGoodActualsToUnknown();
-
-        yield return FadeCanvasGroup(keepGreenText, 0f, introFadeDuration);
         SetMeasurementEnabled(true);
 
-        // Now swap to the other player
-        Debug.Log("[Intro] Reset to Unknown, switching to other player.");
+        //Trainingstep 3:
+        Debug.Log("[Trainingstep 3]");
 
         SetCrosshairP1(true);
         SetCrosshairP2(false);
@@ -772,7 +826,7 @@ public class SquidGameController : MonoBehaviour
         _introPhase = IntroPhase.WaitingForSecondIdentify;
 
         // scan text for second player
-        yield return FadeCanvasGroup(scanP2Text, 1f, introFadeDuration);
+        yield return FadeCanvasGroup(TrainingStep3, 1.0f, 1.0f);
 
         // Wait for second identify
         while (_currentStage == SquidStage.Active &&
@@ -787,19 +841,33 @@ public class SquidGameController : MonoBehaviour
         if (_introPhase != IntroPhase.AfterSecondIdentify)
             yield break;
 
+        yield return FadeCanvasGroup(TrainingStep3, 0.0f, 0.5f);
+        yield return new WaitForSeconds(0.5f);
+
+        //Trainingstep 4:
+        Debug.Log("[Trainingstep 4]");
+        yield return FadeCanvasGroup(TrainingStep4, 1.0f, 1.0f);
+        SetMeasurementEnabled(false);
+        SetCrosshairP1(false);
+        SetCrosshairP2(false);
+        yield return new WaitForSeconds(Training2Duration);
+
+        yield return FadeCanvasGroup(TrainingStep4, 0.0f, 0.5f);
+        yield return new WaitForSeconds(0.5f);
+
+        //Trainingstep 4:
+        Debug.Log("[Trainingstep 4]");
+        yield return FadeCanvasGroup(TrainingStep5, 1.0f, 1.0f);
+
         // Now the Actual is BAD
         Debug.Log("[Intro] Second identify done (BAD). Enabling both cursors for co-op destroy.");
 
-        // Hide "Scan to Identify" texts
-        yield return FadeCanvasGroup(scanP1Text, 0f, introFadeDuration);
-        yield return FadeCanvasGroup(scanP2Text, 0f, introFadeDuration);
-
         // Enable both crosshairs, show "Destroy Red Particles"
+        SetMeasurementEnabled(true);
         SetCrosshairP1(true);
         SetCrosshairP2(true);
 
         _introPhase = IntroPhase.WaitingForDestroyBad;
-        yield return FadeCanvasGroup(destroyRedText, 1f, introFadeDuration);
 
         // Wait until the BAD Actual is fully co-op scanned (destroyed)
         while (_currentStage == SquidStage.Active &&
@@ -808,21 +876,41 @@ public class SquidGameController : MonoBehaviour
             yield return null;
         }
 
+        yield return FadeCanvasGroup(TrainingStep5, 0.0f, 0.5f);
+        yield return new WaitForSeconds(0.5f);
+
         if (_currentStage != SquidStage.Active)
             yield break;
+
+        yield return FadeCanvasGroup(Objective1, 1.0f, 1.0f);
+        yield return new WaitForSeconds(7f);
+        yield return FadeCanvasGroup(Objective1, 0.0f, 0.5f);
+        StandbyText.text = "Standby...";
+        StandbyFliptext.text = "Standby...";
+        yield return new WaitForSeconds(0.5f);
+        yield return FadeCanvasGroup(Objective1Initiating, 1.0f, 1.0f);
+        yield return new WaitForSeconds(0.5f);
+        StandbyText.text = "Standby...";
+        StandbyFliptext.text = "Standby...";
+        yield return new WaitForSeconds(0.5f);
+        StandbyText.text = "Standby..";
+        StandbyFliptext.text = "Standby..";
+        yield return new WaitForSeconds(0.5f);
+        StandbyText.text = "Standby.";
+        StandbyFliptext.text = "Standby.";
+        yield return new WaitForSeconds(0.5f);
+        StandbyText.text = "Standby.";
+        StandbyFliptext.text = "Standby.";
+        yield return FadeCanvasGroup(Objective1Initiating, 0.0f, 0.5f);
 
         if (_introPhase != IntroPhase.Countdown)
             yield break;
 
-        // Phase 3: countdown
-        Debug.Log("[Intro] BAD Actual destroyed. Starting countdown.");
+        // Countdown
 
         // Lock clicks during countdown (movement still allowed via MouseParty, but we block clicks)
         SetMeasurementEnabled(true);
         MeasurementClick.ClickLocked = true;
-
-        // Hide "Destroy Red Particles"
-        yield return FadeCanvasGroup(destroyRedText, 0f, introFadeDuration);
 
         // Countdown overlay
         yield return CountdownRoutine();
@@ -918,10 +1006,10 @@ public class SquidGameController : MonoBehaviour
         {
             _introForceNextGood = false;
 
-            if (scanP1Text != null)
-                StartCoroutine(FadeCanvasGroup(scanP1Text, 0f, introFadeDuration));
-            if (scanP2Text != null)
-                StartCoroutine(FadeCanvasGroup(scanP2Text, 0f, introFadeDuration));
+            //if (scanP1Text != null)
+            //    StartCoroutine(FadeCanvasGroup(scanP1Text, 0f, introFadeDuration));
+            //if (scanP2Text != null)
+            //    StartCoroutine(FadeCanvasGroup(scanP2Text, 0f, introFadeDuration));
 
             _introPhase = IntroPhase.AfterFirstIdentify;
             Debug.Log("[Intro] OnActualIdentified (first) index=" + actualIndex + " isGood=" + isGood);
@@ -930,10 +1018,10 @@ public class SquidGameController : MonoBehaviour
         {
             _introForceNextBad = false;
 
-            if (scanP1Text != null)
-                StartCoroutine(FadeCanvasGroup(scanP1Text, 0f, introFadeDuration));
-            if (scanP2Text != null)
-                StartCoroutine(FadeCanvasGroup(scanP2Text, 0f, introFadeDuration));
+            //if (scanP1Text != null)
+            //    StartCoroutine(FadeCanvasGroup(scanP1Text, 0f, introFadeDuration));
+            //if (scanP2Text != null)
+            //    StartCoroutine(FadeCanvasGroup(scanP2Text, 0f, introFadeDuration));
 
             _introPhase = IntroPhase.AfterSecondIdentify;
             Debug.Log("[Intro] OnActualIdentified (second) index=" + actualIndex + " isGood=" + isGood);
@@ -1026,10 +1114,20 @@ public class SquidGameController : MonoBehaviour
 
     private void HideAllTutorialTextImmediate()
     {
-        SetCanvasGroupImmediate(scanP1Text, 0f, false);
-        SetCanvasGroupImmediate(scanP2Text, 0f, false);
-        SetCanvasGroupImmediate(keepGreenText, 0f, false);
-        SetCanvasGroupImmediate(destroyRedText, 0f, false);
+        SetCanvasGroupImmediate(SyncingBlueReady, 0f, false);
+        SetCanvasGroupImmediate(SyncingPinkReady, 0f, false);
+        SetCanvasGroupImmediate(SyncTextBlue, 0f, false);
+        SetCanvasGroupImmediate(SyncTextPink, 0f, false);
+        SetCanvasGroupImmediate(ScanningInstructions, 0f, false);
+        SetCanvasGroupImmediate(TrainingStep1, 0f, false);
+        SetCanvasGroupImmediate(TrainingStep2, 0f, false);
+        SetCanvasGroupImmediate(TrainingStep3, 0f, false);
+        SetCanvasGroupImmediate(TrainingStep4, 0f, false);
+        SetCanvasGroupImmediate(TrainingStep5, 0f, false);
+        SetCanvasGroupImmediate(Objective1Initiating, 0f, false);
+        SetCanvasGroupImmediate(SwapHuman, 0f, false);
+        SetCanvasGroupImmediate(Objective1, 0f, false);
+        SetCanvasGroupImmediate(Objective2, 0f, false);    
     }
 
     private void ClearCountdownUIImmediate()

@@ -4,10 +4,9 @@ using UnityEngine;
 
 public class StabilityUI : MonoBehaviour
 {
-    public Shapes.Rectangle GoodBar;
     public Shapes.Rectangle GoodBarFlipped;
-    public Shapes.Rectangle Outline;
     public Shapes.Rectangle OutlineFlipped;
+
     public TextMeshProUGUI Status;
     public TextMeshProUGUI StatusFlipped;
 
@@ -18,12 +17,14 @@ public class StabilityUI : MonoBehaviour
     [ColorUsage(true, true)]
     public Color unstableColor;
 
-    public Shapes.Line Dash;
     public Shapes.Line DashFlipped;
     private float Spawntimer = 0;
+    private float GameTimer = 120;
 
-    public float score;
+    public float score = 0;
+    public float CorrectedScore = 0;
     public bool spawningEnabled = true;
+    public int sum = 30;
 
     // Update is called once per frame
     void Update()
@@ -33,34 +34,27 @@ public class StabilityUI : MonoBehaviour
         int bad = ActualParticlePoolSystem.CurrentBad;
         int unk = ActualParticlePoolSystem.CurrentActive - bad - good;
 
-        int sum = bad + good + unk;
-        score = ((float)good + 0.6f * unk + 0.1f * bad) / sum;
-        float TargetGood = 400f * score;
+        score = Mathf.Clamp((5 + ((float)good - 0.25f * unk - 1.0f * bad)) / sum, 0.0f, 1.0f);
+        float TargetGood = 600f * score;
 
         if (sum > 0)
         {
-            
-            GoodBar.Width = Mathf.Lerp(GoodBar.Width, TargetGood, 0.02f);
             GoodBarFlipped.Width = Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f);
         }
         else
         {
-            GoodBar.Width = 0;
             GoodBarFlipped.Width = 0;
         }
 
-        if (Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f) < 0.70 * 400f && sum != 0)
+        if (Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f) < 0.70 * 600f && sum != 0)
         {
-            Status.text = "status: unstable";
-            StatusFlipped.text = "status: unstable";
-            GoodBar.Color = unstableColor;
+            Status.text = "unstable";
+            StatusFlipped.text = "unstable";
             GoodBarFlipped.Color = unstableColor;
-            Dash.gameObject.SetActive(true);
             DashFlipped.gameObject.SetActive(true);
         }
         else if (sum == 0)
         {
-            Dash.gameObject.SetActive(false);
             DashFlipped.gameObject.SetActive(false);
 
             if (Mathf.FloorToInt((Time.time * 2) % 4) == 0)
@@ -118,11 +112,9 @@ public class StabilityUI : MonoBehaviour
         }
         else
         {
-            Status.text = "status: stable";
-            StatusFlipped.text = "status: stable";
-            GoodBar.Color = stableColor;
+            Status.text = "stable";
+            StatusFlipped.text = "stable";
             GoodBarFlipped.Color = stableColor;
-            Dash.gameObject.SetActive(true);
             DashFlipped.gameObject.SetActive(true);
 
             if (!spawningEnabled)
@@ -133,43 +125,46 @@ public class StabilityUI : MonoBehaviour
 
 
             Spawntimer += Time.deltaTime;
-
-            if (score > 0.9 && Spawntimer > 5)
+            GameTimer += Time.deltaTime;
+            GameTimer = Mathf.Clamp(GameTimer, 0.0f, 120f);
+            float CorrectedScore;
+            
+            if (score / (GameTimer/120) > 0.9 && Spawntimer > 5)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score > 0.85 && Spawntimer > 8)
+            else if (score /(GameTimer / 120) > 0.85 && Spawntimer > 8)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score > 0.8 && Spawntimer > 11)
+            else if (score / (GameTimer / 120) > 0.8 && Spawntimer > 11)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score > 0.75 && Spawntimer > 14)
+            else if (score / (GameTimer / 120) > 0.75 && Spawntimer > 14)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score > 0.7 && Spawntimer > 17)
+            else if (score / (GameTimer / 120) > 0.7 && Spawntimer > 17)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score > 0.65 && Spawntimer > 20)
+            else if (score / (GameTimer / 120) > 0.65 && Spawntimer > 20)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score > 0.6 && Spawntimer > 23)
+            else if (score / (GameTimer / 120) > 0.6 && Spawntimer > 23)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
             }
-            else if (score <= 0.6f && Spawntimer > 26)
+            else if (score / (GameTimer / 120) <= 0.6f && Spawntimer > 26)
             {
                 ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
                 Spawntimer = 0;
@@ -179,14 +174,14 @@ public class StabilityUI : MonoBehaviour
 
     public void FadeStability(float targetAlpha, float duration)
     {
-        StartCoroutine(FadeRect(GoodBar, targetAlpha, duration));
-        StartCoroutine(FadeRect(Outline, targetAlpha, duration));
         StartCoroutine(FadeRect(GoodBarFlipped, targetAlpha, duration));
         StartCoroutine(FadeRect(OutlineFlipped, targetAlpha, duration));
-        StartCoroutine(FadeDash(Dash, targetAlpha, duration));
         StartCoroutine(FadeDash(DashFlipped, targetAlpha, duration));
-        StartCoroutine(FadeText(Status, targetAlpha, duration));
         StartCoroutine(FadeText(StatusFlipped, targetAlpha, duration));
+        StartCoroutine(FadeText(Status, targetAlpha, duration));
+
+        if (targetAlpha == 0)
+            GameTimer = 0;
     }
 
     private System.Collections.IEnumerator FadeRect(Shapes.Rectangle rect, float targetAlpha, float duration)
