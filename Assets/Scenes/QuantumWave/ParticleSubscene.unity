@@ -189,7 +189,7 @@ MonoBehaviour:
   scoreClamp: 20
   epsilon: 2
   diffusion: 60
-  dtScale: 20
+  dtScale: 5
   velocityDamping: 0
   forceAccel: 50
   maxSpeed: 17

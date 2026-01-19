@@ -124,7 +124,7 @@ public sealed class MeasurementClick : MonoBehaviour
     [Tooltip("Scale applied to holder cursor (and radii).")]
     public float holderRadiusMultiplier = 2f;
     [Tooltip("Scale applied to assisting / disrupted cursor (and radii).")]
-    public float assistRadiusMultiplier = 2f / 3f;
+    public float assistRadiusMultiplier = 1f;
     [Tooltip("Inner pull multiplier while holding an identified actual (e.g. 0.5 = half strength).")]
     public float holderInnerStrengthMultiplier = 0.5f;
 
@@ -1084,7 +1084,7 @@ public sealed class MeasurementClick : MonoBehaviour
         bool p1IsHolder = p1ScanningIdent && holderForIdxP1 == 1;
         bool p2IsHolder = p2ScanningIdent && holderForIdxP2 == 2;
 
-        float holderRadiusWorld = radius * holderRadiusMultiplier;
+        float holderRadiusWorld = radius * holderRadiusMultiplier * exclusionRadiusMultiplier;
         float distP1P2 = 0f;
         if (p1Available && p2Available)
             distP1P2 = math.length(worldP1 - worldP2);
@@ -1121,10 +1121,10 @@ public sealed class MeasurementClick : MonoBehaviour
 
         if (p1Available && p2Available && !p1Disrupted && !p2Disrupted)
         {
-            if (p1IsHolder && distP1P2 <= holderRadiusWorld * exclusionRadiusMultiplier)
+            if (p1IsHolder && distP1P2 <= holderRadiusWorld /** exclusionRadiusMultiplier*/)
                 p2NearHolder = true;
 
-            if (p2IsHolder && distP1P2 <= holderRadiusWorld * exclusionRadiusMultiplier)
+            if (p2IsHolder && distP1P2 <= holderRadiusWorld/* * exclusionRadiusMultiplier*/)
                 p1NearHolder = true;
         }
 
@@ -1409,7 +1409,7 @@ public sealed class MeasurementClick : MonoBehaviour
                 {
                     radiusP1 *= holderRadiusMultiplier;
                     innerRadiusP1 *= holderRadiusMultiplier;
-                    exclMulP1 *= holderRadiusMultiplier;
+                    exclMulP1 *= 1;
                     innerPushP1 *= holderInnerStrengthMultiplier; // reduce inner pull while holding
                 }
                 else if (p1Assisting && pressedP1)
@@ -1417,7 +1417,7 @@ public sealed class MeasurementClick : MonoBehaviour
                     // Assisting final scan: small radius, no force applied
                     radiusP1 *= assistRadiusMultiplier;
                     innerRadiusP1 *= assistRadiusMultiplier;
-                    exclMulP1 *= assistRadiusMultiplier;
+                    exclMulP1 *= 1;
                     pushP1 = 0f;
                     innerPushP1 = 0f;
                 }
@@ -1425,7 +1425,7 @@ public sealed class MeasurementClick : MonoBehaviour
                 {
                     radiusP1 *= assistRadiusMultiplier;
                     innerRadiusP1 *= assistRadiusMultiplier;
-                    exclMulP1 *= assistRadiusMultiplier;
+                    exclMulP1 *= 1;
                 }
             }
 
@@ -1475,14 +1475,14 @@ public sealed class MeasurementClick : MonoBehaviour
                 {
                     radiusP2 *= holderRadiusMultiplier;
                     innerRadiusP2 *= holderRadiusMultiplier;
-                    exclMulP2 *= holderRadiusMultiplier;
+                    exclMulP2 *= 1;
                     innerPushP2 *= holderInnerStrengthMultiplier;
                 }
                 else if (p2Assisting && pressedP2)
                 {
                     radiusP2 *= assistRadiusMultiplier;
                     innerRadiusP2 *= assistRadiusMultiplier;
-                    exclMulP2 *= assistRadiusMultiplier;
+                    exclMulP2 *= 1;
                     pushP2 = 0f;
                     innerPushP2 = 0f;
                 }
@@ -1490,7 +1490,7 @@ public sealed class MeasurementClick : MonoBehaviour
                 {
                     radiusP2 *= assistRadiusMultiplier;
                     innerRadiusP2 *= assistRadiusMultiplier;
-                    exclMulP2 *= assistRadiusMultiplier;
+                    exclMulP2 *= 1;
                 }
             }
 

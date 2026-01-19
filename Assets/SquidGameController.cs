@@ -108,6 +108,8 @@ public class SquidGameController : MonoBehaviour
 
     public Volume Darken;
 
+    public CanvasGroup IdleOverlay;
+
     // ---------------- Intro tutorial internal state (runs inside Active) ----------------
 
     private enum IntroPhase
@@ -269,7 +271,7 @@ public class SquidGameController : MonoBehaviour
     private async Task PublishGameEndAsync(int score)
     {
         if (_mqtt == null) return;
-
+        Debug.Log(score);
         // quant/squid {"sndr":"squid-ctrl", "inf":{"stage":"solved","score":score},"trig":"time"}
         await _mqtt.PublishGameEndAsync("solved", score);
     }
@@ -311,7 +313,7 @@ public class SquidGameController : MonoBehaviour
     private void EnterIdle()
     {
         ActualParticlePoolSystem.CurrentActive = 0;
-        Darken.weight = 1.0f;
+        IdleOverlay.alpha = 1.0f;
         Timer.remaining = 0;
         TimerFlipped.remaining = 0; 
         Timer.timerText.text = string.Empty;
@@ -350,7 +352,7 @@ public class SquidGameController : MonoBehaviour
     private void EnterIntro()
     {
         Debug.Log("[SQUID] EnterIntro (practice)");
-        Darken.weight = 0.0f;
+        IdleOverlay.alpha = 0.0f;
         _gameEnded = false;
         _timerStarted = false;
 
@@ -381,7 +383,7 @@ public class SquidGameController : MonoBehaviour
     {
         Debug.Log("[SQUID] EnterActive");
         ActualParticlePoolSystem.CurrentActive = 0;
-        Darken.weight = 0.0f;
+        IdleOverlay.alpha = 0.0f;
         _gameEnded = false;
         _timerStarted = false;
         _introTutorialCompleted = false;
@@ -434,7 +436,7 @@ public class SquidGameController : MonoBehaviour
     private void EnterSolved()
     {
         Debug.Log("[SQUID] EnterSolved");
-        Darken.weight = 0.0f;
+        IdleOverlay.alpha = 0.0f;
         _timerStarted = false;
 
         SetMeasurementEnabled(false);
@@ -663,11 +665,13 @@ public class SquidGameController : MonoBehaviour
         if (StabilityUI != null)
             StabilityUI.spawningEnabled = false;
 
-        // Move to solved stage (local)
-        ApplyStageImmediately(SquidStage.Solved, sendMqtt: true);
-
         // MQTT game end message (score 0/1)
         _ = PublishGameEndAsync(stableFlag);
+
+        // Move to solved stage (local)
+        ApplyStageImmediately(SquidStage.Solved, sendMqtt: false);
+
+
     }
 
     // =========================================================

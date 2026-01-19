@@ -5,6 +5,7 @@ using Newtonsoft.Json;
 using System;
 using System.Net;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using static UnityEngine.Rendering.DebugUI;
@@ -20,6 +21,7 @@ public class SquidMqttClient : MonoBehaviour
     [SerializeField] private string version = "1.0.0";
 
     private IMqttClient _client;
+    private MqttClientOptions _options;
 
     private string _elementTopic = "quant/squid";
     private string _rootTopic = "quant";
@@ -27,8 +29,15 @@ public class SquidMqttClient : MonoBehaviour
     // Latest received language (default English)
     public string CurrentLanguage { get; private set; } = "en";
     public bool MQTTActive = true;
+
+    // Reconnect control
+    private CancellationTokenSource _cts;
+    private Task _reconnectTask;
+    private volatile bool _isReconnecting;
+
     private async void Start()
     {
+        _cts = new CancellationTokenSource();
         await ConnectAndSubscribeAsync();
     }
 
@@ -37,36 +46,76 @@ public class SquidMqttClient : MonoBehaviour
         var factory = new MqttFactory();
         _client = factory.CreateMqttClient();
 
+        // Message handler (unchanged)
         _client.ApplicationMessageReceivedAsync += OnMessageReceivedAsync;
 
-        var options = new MqttClientOptionsBuilder()
+        // Build and store options so we can reuse them for reconnects
+        _options = new MqttClientOptionsBuilder()
             .WithClientId(deviceId)
             .WithTcpServer(brokerIp, brokerPort)
             .WithCleanSession()
             .Build();
 
-        try
+        // On connect: (re)subscribe + publish connection message
+        _client.ConnectedAsync += async e =>
         {
-            await _client.ConnectAsync(options);
             Debug.Log("[MQTT] Connected to broker " + brokerIp + ":" + brokerPort);
 
-            // Subscribe to quant/squid/# for set messages
-            await _client.SubscribeAsync(
-                new MqttTopicFilterBuilder()
-                    .WithTopic(_elementTopic + "/#")
-                    .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
-                    .Build());
+            try
+            {
+                // Subscribe to quant/squid/# for set messages
+                await _client.SubscribeAsync(
+                    new MqttTopicFilterBuilder()
+                        .WithTopic(_elementTopic + "/#")
+                        .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                        .Build());
 
-            //// Subscribe to quant/# for general messages
-            //await _client.SubscribeAsync(
-            //    new MqttTopicFilterBuilder()
-            //        .WithTopic(_rootTopic + "/#")
-            //        .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
-            //        .Build());
+                //// Subscribe to quant/# for general messages
+                //await _client.SubscribeAsync(
+                //    new MqttTopicFilterBuilder()
+                //        .WithTopic(_rootTopic + "/#")
+                //        .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                //        .Build());
 
-            Debug.Log("[MQTT] Subscribed to quant/squid/# and quant/#");
+                Debug.Log("[MQTT] Subscribed to quant/squid/# and quant/#");
 
-            await PublishConnectionAsync("connected");
+                await PublishConnectionAsync("connected");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[MQTT] Post-connect setup failed: " + ex.Message);
+            }
+        };
+
+        // On disconnect: start reconnect loop
+        _client.DisconnectedAsync += async e =>
+        {
+            Debug.LogWarning($"[MQTT] Disconnected. Reason: {e.Reason} Exception: {e.Exception?.Message}");
+
+            if (_cts == null || _cts.IsCancellationRequested)
+                return;
+
+            if (_isReconnecting)
+                return;
+
+            _isReconnecting = true;
+
+            _reconnectTask = ReconnectLoopAsync(_cts.Token);
+            try
+            {
+                await _reconnectTask;
+            }
+            finally
+            {
+                _isReconnecting = false;
+            }
+        };
+
+        // Initial connect attempt (your original try/catch behavior preserved)
+        try
+        {
+            await _client.ConnectAsync(_options, _cts.Token);
+            // ConnectedAsync handler will do subscribe + publish
         }
         catch (Exception ex)
         {
@@ -74,10 +123,50 @@ public class SquidMqttClient : MonoBehaviour
         }
     }
 
+    private async Task ReconnectLoopAsync(CancellationToken ct)
+    {
+        int attempt = 0;
+
+        while (!ct.IsCancellationRequested && (_client == null || !_client.IsConnected))
+        {
+            attempt++;
+
+            // exponential backoff up to 30 seconds
+            int cappedAttempt = Math.Min(attempt, 6); // 2^6 = 64
+            int delayMs = Math.Min(30_000, 500 * (int)Math.Pow(2, cappedAttempt));
+
+            try
+            {
+                Debug.Log($"[MQTT] Reconnect attempt #{attempt}...");
+                await _client.ConnectAsync(_options, ct);
+
+                Debug.Log("[MQTT] Reconnected!");
+                return; // ConnectedAsync will re-subscribe + publish
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[MQTT] Reconnect failed: " + ex.Message);
+                try
+                {
+                    await Task.Delay(delayMs, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
     private Task OnMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs e)
     {
         if (!MQTTActive)
-            return null;
+            return Task.CompletedTask; // IMPORTANT: do not return null
+
         try
         {
             var topic = e.ApplicationMessage.Topic;
@@ -269,9 +358,22 @@ public class SquidMqttClient : MonoBehaviour
 
     private async void OnDestroy()
     {
+        try
+        {
+            _cts?.Cancel();
+
+            if (_reconnectTask != null)
+                await _reconnectTask;
+        }
+        catch { }
+
         if (_client != null && _client.IsConnected)
         {
-            await _client.DisconnectAsync();
+            try { await _client.DisconnectAsync(); }
+            catch { }
         }
+
+        _cts?.Dispose();
+        _cts = null;
     }
 }

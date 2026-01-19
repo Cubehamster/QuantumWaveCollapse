@@ -310,9 +310,12 @@ public sealed class ActualParticleDotUI : MonoBehaviour
 
             disc.Color = finalColor;
 
-            outline.Color = new Color(0,0,0, alphaFactor);
-            disc.Radius = 0.5f * dotDiameter * radiusMul;
+            if(highlight)
+                outline.Color = new Color(baseColor.r, baseColor.g, baseColor.b, alphaFactor);
+            else
+                outline.Color = new Color(0, 0, 0, alphaFactor);
 
+            disc.Radius = 0.5f * dotDiameter * radiusMul;
         }
     }
 
@@ -429,8 +432,8 @@ public sealed class ActualParticleDotUI : MonoBehaviour
         var outline = outlineGO.GetComponent<Shapes.Disc>();
         outline.Color = Color.black;
         outline.Type = Shapes.DiscType.Ring;
-        outline.Thickness = 5;
-        outline.Radius = dotDiameter * 0.5f;
+        outline.Thickness = 8;
+        outline.Radius = dotDiameter * 0.5f + outline.Thickness * 0.5f;
 
         var boing = discGO.GetComponent<BoingBehavior>();
         boing.LockTranslationZ = true;
