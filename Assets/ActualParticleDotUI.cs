@@ -310,10 +310,13 @@ public sealed class ActualParticleDotUI : MonoBehaviour
 
             disc.Color = finalColor;
 
-            if(highlight)
-                outline.Color = new Color(baseColor.r, baseColor.g, baseColor.b, alphaFactor);
-            else
-                outline.Color = new Color(0, 0, 0, alphaFactor);
+            if(outline != null)
+            {
+                if (highlight)
+                    outline.Color = new Color(baseColor.r, baseColor.g, baseColor.b, alphaFactor);
+                else
+                    outline.Color = new Color(0, 0, 0, alphaFactor);
+            }           
 
             disc.Radius = 0.5f * dotDiameter * radiusMul;
         }

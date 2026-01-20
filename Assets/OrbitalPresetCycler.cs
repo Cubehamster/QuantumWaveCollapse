@@ -366,6 +366,27 @@ public sealed class OrbitalPresetCycler : MonoBehaviour
         return arr[0];
     }
 
+    public void ApplySpeed(float speed)
+    {
+        var world = World.DefaultGameObjectInjectionWorld;
+        if (world == null || !world.IsCreated) return;
+
+        var em = world.EntityManager;
+
+        // Find the singleton (the entity that has LangevinParams2D)
+        using var q = em.CreateEntityQuery(ComponentType.ReadWrite<LangevinParams2D>());
+        if (q.IsEmpty) return;
+
+        var e = q.GetSingletonEntity();
+        var lp = em.GetComponentData<LangevinParams2D>(e);
+
+        lp.DtScale = speed;
+
+        em.SetComponentData(e, lp);
+        Debug.Log("speed: " + lp.DtScale);
+    }
+
+
     // --------------------------------------------------------------------
     // Core apply function used by both keyboard stepping and random stepping
     // --------------------------------------------------------------------

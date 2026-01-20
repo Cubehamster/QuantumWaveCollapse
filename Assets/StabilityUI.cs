@@ -1,6 +1,7 @@
 using TMPro;
 using Unity.VisualScripting;
 using UnityEngine;
+using Oklab;
 
 public class StabilityUI : MonoBehaviour
 {
@@ -18,13 +19,15 @@ public class StabilityUI : MonoBehaviour
     public Color unstableColor;
 
     public Shapes.Line DashFlipped;
-    private float Spawntimer = 0;
-    private float GameTimer = 120;
+    public float Spawntimer = 0;
+    public float GameTimer = 120;
 
     public float score = 0;
     public float CorrectedScore = 0;
     public bool spawningEnabled = true;
     public int sum = 30;
+
+    public OrbitalPresetCycler orbitalPresetCycler;
 
     // Update is called once per frame
     void Update()
@@ -34,7 +37,7 @@ public class StabilityUI : MonoBehaviour
         int bad = ActualParticlePoolSystem.CurrentBad;
         int unk = ActualParticlePoolSystem.CurrentActive - bad - good;
 
-        score = Mathf.Clamp((5 + ((float)good - 0.25f * unk - 1.0f * bad)) / sum, 0.0f, 1.0f);
+        score = Mathf.Clamp((5 + 1.25f * ((float)good - 0.25f * unk - 1.0f * bad)) / sum, 0.0f, 1.0f);
         float TargetGood = 600f * score;
 
         if (sum > 0)
@@ -46,12 +49,63 @@ public class StabilityUI : MonoBehaviour
             GoodBarFlipped.Width = 0;
         }
 
+        if (SquidGameController.CurrentObjective == 1)
+        {
+            if (Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f) < 0.70 * 600f && sum != 0)
+            {
+                DashFlipped.gameObject.SetActive(true);
+                Status.text = "unstable";
+                StatusFlipped.text = "unstable";
+            }
+            else
+            {
+                DashFlipped.gameObject.SetActive(true);
+                Status.text = "stable";
+                StatusFlipped.text = "stable";
+            }
+        }
+        else
+        {
+            if (Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f) < 0.99f * 600f && sum != 0)
+            {
+                DashFlipped.gameObject.SetActive(false);
+                Status.text = "unstable";
+                StatusFlipped.text = "unstable";
+            }
+            else
+            {
+                DashFlipped.gameObject.SetActive(false);
+                Status.text = "stable";
+                StatusFlipped.text = "stable";
+            }
+        }
+ 
+
+
         if (Mathf.Lerp(GoodBarFlipped.Width, TargetGood, 0.02f) < 0.70 * 600f && sum != 0)
         {
-            Status.text = "unstable";
-            StatusFlipped.text = "unstable";
-            GoodBarFlipped.Color = unstableColor;
-            DashFlipped.gameObject.SetActive(true);
+
+            if (TargetGood > 1.02f * GoodBarFlipped.Width)
+            {
+                if (SquidGameController.CurrentObjective == 1)
+                    GoodBarFlipped.Color = Oklab.Oklab.OklabLerp(unstableColor, stableColor, (((GoodBarFlipped.Width + 40) / 0.7f) / 600));
+                else
+                    GoodBarFlipped.Color = Oklab.Oklab.OklabLerp(unstableColor, stableColor, (((GoodBarFlipped.Width + 40)) / 600));
+            }
+            else if (TargetGood < 0.98f * GoodBarFlipped.Width)
+            {
+                if (SquidGameController.CurrentObjective == 1)
+                    GoodBarFlipped.Color = Oklab.Oklab.OklabLerp(unstableColor, stableColor, (((GoodBarFlipped.Width - 40) / 0.7f) / 600));
+                else
+                    GoodBarFlipped.Color = Oklab.Oklab.OklabLerp(unstableColor, stableColor, (((GoodBarFlipped.Width - 40)) / 600));
+            }
+            else
+            {
+                if (SquidGameController.CurrentObjective == 1)
+                    GoodBarFlipped.Color = Oklab.Oklab.OklabLerp(unstableColor, stableColor, (((GoodBarFlipped.Width) / 0.7f) / 600));
+                else
+                    GoodBarFlipped.Color = Oklab.Oklab.OklabLerp(unstableColor, stableColor, (((GoodBarFlipped.Width)) / 600));
+            }
         }
         else if (sum == 0)
         {
@@ -116,59 +170,68 @@ public class StabilityUI : MonoBehaviour
             StatusFlipped.text = "stable";
             GoodBarFlipped.Color = stableColor;
             DashFlipped.gameObject.SetActive(true);
+        }
 
-            if (!spawningEnabled)
-                return;
+        if (!spawningEnabled)
+            return;
 
-            if (ActualParticlePoolSystem.s_SuppressIdentifySpawns || ActualParticlePoolSystem.s_SuppressCoopSpawns)
-                return;
+        if (ActualParticlePoolSystem.s_SuppressIdentifySpawns || ActualParticlePoolSystem.s_SuppressCoopSpawns)
+            return;
 
 
-            Spawntimer += Time.deltaTime;
-            GameTimer += Time.deltaTime;
-            GameTimer = Mathf.Clamp(GameTimer, 0.0f, 120f);
-            float CorrectedScore;
-            
-            if (score / (GameTimer/120) > 0.9 && Spawntimer > 5)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
-            else if (score /(GameTimer / 120) > 0.85 && Spawntimer > 8)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
-            else if (score / (GameTimer / 120) > 0.8 && Spawntimer > 11)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
-            else if (score / (GameTimer / 120) > 0.75 && Spawntimer > 14)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
-            else if (score / (GameTimer / 120) > 0.7 && Spawntimer > 17)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
-            else if (score / (GameTimer / 120) > 0.65 && Spawntimer > 20)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
-            else if (score / (GameTimer / 120) > 0.6 && Spawntimer > 23)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
-            else if (score / (GameTimer / 120) <= 0.6f && Spawntimer > 26)
-            {
-                ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
-                Spawntimer = 0;
-            }
+        Spawntimer += Time.deltaTime;
+        GameTimer += Time.deltaTime;
+        GameTimer = Mathf.Clamp(GameTimer, 0.0f, 120f);
+        if (score == 0 || GameTimer == 0)
+            CorrectedScore = 0;
+        else
+        {
+            CorrectedScore = score / (((GameTimer * 80) / 100 + 20) / 100);
+            orbitalPresetCycler.ApplySpeed(Mathf.Pow(CorrectedScore, 1.5f) * 15);
+        }
+
+
+
+
+        if (CorrectedScore > 0.9 && Spawntimer > 5)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
+        }
+        else if (CorrectedScore > 0.85 && Spawntimer > 8)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
+        }
+        else if (CorrectedScore > 0.8 && Spawntimer > 11)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
+        }
+        else if (CorrectedScore > 0.75 && Spawntimer > 14)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
+        }
+        else if (CorrectedScore > 0.7 && Spawntimer > 17)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
+        }
+        else if (CorrectedScore > 0.65 && Spawntimer > 20)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
+        }
+        else if (CorrectedScore > 0.6 && Spawntimer > 23)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
+        }
+        else if (CorrectedScore <= 0.6f && Spawntimer > 26)
+        {
+            ActualParticlePoolSystem.RequestImmediateUnknownSpawns(1);
+            Spawntimer = 0;
         }
     }
 
@@ -176,7 +239,15 @@ public class StabilityUI : MonoBehaviour
     {
         StartCoroutine(FadeRect(GoodBarFlipped, targetAlpha, duration));
         StartCoroutine(FadeRect(OutlineFlipped, targetAlpha, duration));
-        StartCoroutine(FadeDash(DashFlipped, targetAlpha, duration));
+        if(SquidGameController.CurrentObjective == 1)
+        {
+            StartCoroutine(FadeDash(DashFlipped, targetAlpha, duration));
+        }
+        else
+        {
+            StartCoroutine(FadeDash(DashFlipped, 0.0f, duration));
+        }
+
         StartCoroutine(FadeText(StatusFlipped, targetAlpha, duration));
         StartCoroutine(FadeText(Status, targetAlpha, duration));
 

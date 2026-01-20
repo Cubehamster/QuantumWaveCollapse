@@ -166,9 +166,9 @@ public partial struct ActualParticlePoolSystem : ISystem
         // spawn more Unknowns; the controller will spawn two after the countdown.
         if (!s_SuppressCoopSpawns)
         {
-            s_PendingSpawnCount += wasGood ? 0 : 2;
+            s_PendingSpawnCount += wasGood ? 0 : 1;
             s_SpawnCooldown = Mathf.Max(s_SpawnCooldown, SpawnCooldownDuration);
-            CurrentActive += wasGood ? 0 : 2;
+            CurrentActive += wasGood ? 0 : 0;
         }
     }
 

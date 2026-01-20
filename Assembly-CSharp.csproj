@@ -77,6 +77,7 @@
     <Compile Include="Assets\DensityBuildSystem.cs" />
     <Compile Include="Assets\Rng.cs" />
     <Compile Include="Assets\SimpleWalkerSpawner.cs" />
+    <Compile Include="Assets\OkLab.cs" />
     <Compile Include="Assets\SimpleWalkerSpawnerAuthoring.cs" />
     <Compile Include="Assets\MeasurementSystem.cs" />
     <Compile Include="Assets\ActualParticleSystem.cs" />

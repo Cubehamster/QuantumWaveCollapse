@@ -5,6 +5,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Entities.UniversalDelegates;
 using Unity.Mathematics;
+using Unity.Scenes;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -182,6 +183,8 @@ public class SquidGameController : MonoBehaviour
 
     public SquidMqttClient Mqtt;
 
+    public int CurrentObjective = 1;
+
     private void Awake()
     {
         if (Instance != null && Instance != this)
@@ -200,6 +203,7 @@ public class SquidGameController : MonoBehaviour
             measurementClick = FindObjectOfType<MeasurementClick>();
 
         _currentStage = startStage;
+        CurrentObjective = 1;
 
         // Apply initial local stage behaviour
         ApplyStageImmediately(_currentStage, sendMqtt: false);
@@ -242,10 +246,22 @@ public class SquidGameController : MonoBehaviour
         {
             _timeLeft = Timer.remaining;
 
-            if (_timeLeft <= 0f)
+            if(CurrentObjective == 1)
             {
-                OnGameTimerFinished();
+                if (_timeLeft <= 0f || StabilityUI.score >= 0.7f)
+                {
+                    OnGameTimerFinished();
+                }
             }
+            else
+            {
+                if (_timeLeft <= 0f || StabilityUI.score >= 1.0f)
+                {
+                    OnGameTimerFinished();
+                }
+
+            }
+
         }
 
         DebugKeyStageSwitch();
@@ -357,6 +373,12 @@ public class SquidGameController : MonoBehaviour
 
     private void EnterIdle()
     {
+        StopAllCoroutines();
+        StabilityUI.score = 0f;
+        StabilityUI.GameTimer = 0f;
+        StabilityUI.orbitalPresetCycler.ApplySpeed(5);
+        CurrentObjective = 1;
+
         ActualParticlePoolSystem.CurrentActive = 0;
         IdleOverlay.alpha = 1.0f;
         Timer.remaining = 0;
@@ -398,13 +420,17 @@ public class SquidGameController : MonoBehaviour
 
     private void EnterActive()
     {
+        StopAllCoroutines();
+        StabilityUI.score = 0f;
+        StabilityUI.GameTimer = 0f;
+        StabilityUI.orbitalPresetCycler.ApplySpeed(5);
+
+
         Debug.Log("[SQUID] EnterActive");
         ActualParticlePoolSystem.CurrentActive = 0;
         IdleOverlay.alpha = 0.0f;
         _gameEnded = false;
         _timerStarted = false;
-        _introTutorialCompleted = false;
-
         // Ensure chaos is off and forces are clean
         OrbitalPresetCycler.ExitChaosMode();
         ZeroAllForces();
@@ -437,21 +463,20 @@ public class SquidGameController : MonoBehaviour
         _introP1Clicked = false;
         _introP2Clicked = false;
 
-        if (!_introTutorialCompleted)
+        if (CurrentObjective == 1)
         {
             _introRoutine = StartCoroutine(IntroRoutine());
         }
         else
         {
             // Skip tutorial on re-entry: start normal gameplay directly
-            StartGameTimer();
-            if (StabilityUI != null)
-                StabilityUI.spawningEnabled = true;
+            StartCoroutine(Phase2Routine());
         }
     }
 
     private void EnterSolved()
     {
+        StopAllCoroutines();
         Debug.Log("[SQUID] EnterSolved");
         IdleOverlay.alpha = 0.0f;
         _timerStarted = false;
@@ -470,7 +495,7 @@ public class SquidGameController : MonoBehaviour
         if (StabilityUI != null)
         {
             StabilityUI.spawningEnabled = false;
-            StabilityUI.FadeStability(1, 2f);
+            StabilityUI.FadeStability(0.0f, 2f);
         }
 
         HideAllTutorialTextImmediate();
@@ -485,9 +510,18 @@ public class SquidGameController : MonoBehaviour
     private System.Collections.IEnumerator SolvedStateRoutine()
     {
         // 1) Apply final particle state (all green or all red)
+        StabilityUI.spawningEnabled = false;
+        yield return new WaitForSeconds(1f);
         ApplyFinalParticleState(_finalStable);
 
         Debug.Log("SolvedStateRoutine started. State is: " + _finalStable);
+
+        Timer.remaining = 0;
+        TimerFlipped.remaining = 0;
+        Timer.timerText.text = "";
+        TimerFlipped.timerText.text = "";
+        Timer.StopAllCoroutines();
+        TimerFlipped.StopAllCoroutines();
 
         // 2) Drive orbitals / chaos behaviour
         if (_finalStable)
@@ -515,16 +549,34 @@ public class SquidGameController : MonoBehaviour
 
         if (countdownLabel != null)
         {
-            countdownLabel.text = _finalStable
-                ? "SYSTEM STABALIZED"
-                : "SYSTEM COLLAPSE";
-            countdownLabelFlipped.text = _finalStable
-                ? "SYSTEM STABALIZED"
-                : "SYSTEM COLLAPSE";
+            if(CurrentObjective == 1)
+            {
+                countdownLabel.text = _finalStable
+                    ? "PHASE 1/2 CALIBRATED"
+                    : "BAD CALIBRATION";
+                countdownLabelFlipped.text = _finalStable
+                    ? "PHASE 1/2 CALIBRATED"
+                    : "BAD CALIBRATION";
+            }
+            else
+            {
+                countdownLabel.text = _finalStable
+                    ? "SYSTEM STABILIZED"
+                    : "SYSTEM COLLAPSE";
+                countdownLabelFlipped.text = _finalStable
+                    ? "SYSTEM STABILIZED"
+                    : "SYSTEM COLLAPSE";
+            }
         }
 
+        float solvedDuration = 20f;
+
         // 4) Stay in Solved for 60 seconds
-        const float solvedDuration = 60f;
+        if (CurrentObjective == 1)
+        {
+            solvedDuration = 10f;
+        }
+
         float t = 0f;
         while (t < solvedDuration && _currentStage == SquidStage.Solved)
         {
@@ -534,13 +586,26 @@ public class SquidGameController : MonoBehaviour
 
         // 5) Fade out overlay
         if (countdownOverlay != null)
-            yield return FadeCanvasGroup(countdownOverlay, 0f, 0.5f);
+            yield return FadeCanvasGroup(countdownOverlay, 0f, 1.0f);
 
         // 6) Make sure chaos is OFF before next run, then back to Idle
         OrbitalPresetCycler.ExitChaosMode();
 
-        ApplyStageImmediately(SquidStage.Idle, sendMqtt: false);
-        _solvedRoutine = null;
+        if(CurrentObjective == 1)
+        {
+            CurrentObjective = 2;
+            ApplyStageImmediately(SquidStage.Active, sendMqtt: false);
+            _solvedRoutine = null;
+            StabilityUI.score = 0f;
+            StabilityUI.GameTimer = 0f;
+        }
+        else
+        {
+            ApplyStageImmediately(SquidStage.Idle, sendMqtt: false);
+            _solvedRoutine = null;
+            StabilityUI.score = 0f;
+            StabilityUI.GameTimer = 0f;
+        }
     }
 
     private void ApplyFinalParticleState(bool stable)
@@ -653,7 +718,7 @@ public class SquidGameController : MonoBehaviour
         float score = 0f;
         if (sum > 0)
         {
-            score = ((float)good + 0.6f * unk + 0.1f * bad) / sum;
+            score = StabilityUI.score;
         }
         else
         {
@@ -661,7 +726,11 @@ public class SquidGameController : MonoBehaviour
             score = 1f;
         }
 
+
         int stableFlag = score >= 0.70f ? 1 : 0;
+
+        if(CurrentObjective == 2)
+            stableFlag = score >= 0.99f ? 1 : 0;
 
         _finalScore = score;
         _finalStable = (stableFlag == 1);
@@ -683,12 +752,84 @@ public class SquidGameController : MonoBehaviour
             StabilityUI.spawningEnabled = false;
 
         // MQTT game end message (score 0/1)
-        _ = PublishGameEndAsync(stableFlag);
+        if(CurrentObjective == 1)
+            _ = PublishGameEndAsync(stableFlag);
 
         // Move to solved stage (local)
         ApplyStageImmediately(SquidStage.Solved, sendMqtt: false);
 
 
+    }
+
+    private System.Collections.IEnumerator Phase2Routine()
+    {
+        if (_currentStage != SquidStage.Active)
+            yield break;
+        StabilityUI.spawningEnabled = false;
+        StabilityUI.Spawntimer = 0;
+        StabilityUI.GameTimer = 0;
+
+        yield return new WaitForSeconds(1f);
+        yield return FadeCanvasGroup(SwapHuman, 1.0f, 1.0f);
+        SwapHumanText.text = "Please swap Human if possible.....";
+        SwapHumanFlippedText.text = "Please swap Human if possible.....";
+        yield return new WaitForSeconds(2f);
+        SwapHumanText.text = "Please swap Human if possible....";
+        SwapHumanFlippedText.text = "Please swap Human if possible....";
+        yield return new WaitForSeconds(2f);
+        SwapHumanText.text = "Please swap Human if possible...";
+        SwapHumanFlippedText.text = "Please swap Human if possible...";
+        yield return new WaitForSeconds(2f);
+        SwapHumanText.text = "Please swap Human if possible..";
+        SwapHumanFlippedText.text = "Please swap Human if possible..";
+        yield return new WaitForSeconds(2f);
+        SwapHumanText.text = "Please swap Human if possible.";
+        SwapHumanFlippedText.text = "Please swap Human if possible.";
+        yield return new WaitForSeconds(2f);
+        SwapHumanText.text = "Please swap Human if possible";
+        SwapHumanFlippedText.text = "Please swap Human if possible";
+        yield return FadeCanvasGroup(SwapHuman, 0.0f, 1.0f);
+        yield return new WaitForSeconds(1f);
+        yield return FadeCanvasGroup(Objective2, 1.0f, 1.0f);
+        yield return new WaitForSeconds(7f);
+        yield return FadeCanvasGroup(Objective2, 0.0f, 0.5f);
+        StandbyText.text = "Standby....";
+        StandbyFliptext.text = "Standby....";
+        yield return new WaitForSeconds(0.5f);
+        yield return FadeCanvasGroup(Objective1Initiating, 1.0f, 1.0f);
+        StabilityUI.FadeStability(1.0f, 1.0f);
+        StandbyText.text = "Standby...";
+        StandbyFliptext.text = "Standby...";
+        yield return new WaitForSeconds(0.5f);
+        StandbyText.text = "Standby..";
+        StandbyFliptext.text = "Standby..";
+        yield return new WaitForSeconds(0.5f);
+        StandbyText.text = "Standby.";
+        StandbyFliptext.text = "Standby.";
+        yield return new WaitForSeconds(0.5f);
+        StandbyText.text = "Standby";
+        StandbyFliptext.text = "Standby";
+        yield return FadeCanvasGroup(Objective1Initiating, 0.0f, 0.5f);
+
+
+        // Lock clicks during countdown (movement still allowed via MouseParty, but we block clicks)
+        SetMeasurementEnabled(true);
+        MeasurementClick.ClickLocked = true;
+
+        // Countdown overlay
+        yield return CountdownRoutine();
+
+        StartGameTimer();
+
+        // Tutorial done → normal Active gameplay
+        _introPhase = IntroPhase.None;
+        _introTutorialCompleted = true;
+        StabilityUI.spawningEnabled = true;
+        // Re-enable measurement for normal gameplay
+        SetMeasurementEnabled(true);
+        MeasurementClick.ClickLocked = false;
+        SetCrosshairP1(true);
+        SetCrosshairP2(true);
     }
 
     // =========================================================
@@ -712,20 +853,24 @@ public class SquidGameController : MonoBehaviour
         {
             if (_introP1Clicked)
             {
-                yield return FadeCanvasGroup(SyncTextPink, 0.0f, 1.0f);
+                yield return FadeCanvasGroup(SyncTextPink, 0.0f, 0.5f);
                 yield return new WaitForSeconds(1.0f);
-                yield return FadeCanvasGroup(SyncingPinkReady, 1.0f, 1f);
+                yield return FadeCanvasGroup(SyncingPinkReady, 1.0f, 1.0f);
             }
 
             if (_introP2Clicked)
             {
                 yield return FadeCanvasGroup(SyncTextBlue, 0.0f, 0.5f);
                 yield return new WaitForSeconds(1.0f);
-                yield return FadeCanvasGroup(SyncingBlueReady, 1.0f, 1f);
+                yield return FadeCanvasGroup(SyncingBlueReady, 1.0f, 1.0f);
             }
             yield return null;
         }
-
+        yield return FadeCanvasGroup(SyncTextPink, 0.0f, 0.5f);
+        yield return FadeCanvasGroup(SyncTextBlue, 0.0f, 0.5f);
+        yield return new WaitForSeconds(0.5f);
+        yield return FadeCanvasGroup(SyncingBlueReady, 1.0f, 1.0f);
+        yield return FadeCanvasGroup(SyncingPinkReady, 1.0f, 1.0f);
         yield return new WaitForSeconds(1.0f);
 
         if (_currentStage != SquidStage.Active)
@@ -733,6 +878,8 @@ public class SquidGameController : MonoBehaviour
 
         Debug.Log("[Intro] Both players have interacted. Warmup timer starts.");
 
+        yield return FadeCanvasGroup(SyncTextPink, 0.0f, 1.0f);
+        yield return FadeCanvasGroup(SyncTextBlue, 0.0f, 1.0f);
         yield return FadeCanvasGroup(SyncingPinkReady, 0.0f, 1f);
         yield return FadeCanvasGroup(SyncingBlueReady, 0.0f, 1f);
 
@@ -763,6 +910,7 @@ public class SquidGameController : MonoBehaviour
 
         // Training Step 1:
         Debug.Log("[Trainingstep 1]");
+        StabilityUI.FadeStability(1.0f, 0.5f);
         // Tutorial: no extra spawns from Good identify or coop destroy.
         ActualParticlePoolSystem.SetTutorialSpawnSuppression(
             suppressIdentify: true,
@@ -800,7 +948,7 @@ public class SquidGameController : MonoBehaviour
 
         //Trainingstep 2:
         Debug.Log("[Trainingstep 2]");
-        StabilityUI.FadeStability(1.0f, 0.5f);
+
         yield return FadeCanvasGroup(TrainingStep2, 1.0f, 1.0f);
 
         SetMeasurementEnabled(false);
@@ -885,11 +1033,10 @@ public class SquidGameController : MonoBehaviour
         yield return FadeCanvasGroup(Objective1, 1.0f, 1.0f);
         yield return new WaitForSeconds(7f);
         yield return FadeCanvasGroup(Objective1, 0.0f, 0.5f);
-        StandbyText.text = "Standby...";
-        StandbyFliptext.text = "Standby...";
+        StandbyText.text = "Standby....";
+        StandbyFliptext.text = "Standby....";
         yield return new WaitForSeconds(0.5f);
         yield return FadeCanvasGroup(Objective1Initiating, 1.0f, 1.0f);
-        yield return new WaitForSeconds(0.5f);
         StandbyText.text = "Standby...";
         StandbyFliptext.text = "Standby...";
         yield return new WaitForSeconds(0.5f);
@@ -899,8 +1046,8 @@ public class SquidGameController : MonoBehaviour
         StandbyText.text = "Standby.";
         StandbyFliptext.text = "Standby.";
         yield return new WaitForSeconds(0.5f);
-        StandbyText.text = "Standby.";
-        StandbyFliptext.text = "Standby.";
+        StandbyText.text = "Standby";
+        StandbyFliptext.text = "Standby";
         yield return FadeCanvasGroup(Objective1Initiating, 0.0f, 0.5f);
 
         if (_introPhase != IntroPhase.Countdown)
@@ -930,6 +1077,7 @@ public class SquidGameController : MonoBehaviour
 
     private System.Collections.IEnumerator CountdownRoutine()
     {
+        Debug.Log("Starting Countdown");
         // Players can move, but cannot click during countdown
         MeasurementClick.ClickLocked = true;
 
